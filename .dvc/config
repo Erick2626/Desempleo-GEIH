@@ -1,0 +1,4 @@
+[core]
+    remote = storage
+['remote "storage"']
+    url = C:\Users\erik2\OneDrive\desempleo-dvc
