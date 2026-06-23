@@ -1,0 +1,999 @@
+---
+title: "Predicción del Desempleo por Perfil Demográfico en Colombia"
+subtitle: "Proyecto Final — Despliegue de soluciones analiticas | Universidad de los Andes"
+author: "Bareño Nathalie, Guerrero Erick"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    number_sections: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 9,
+  fig.height = 5
+)
+
+# -- Flag global ---------------------------------------------
+# Definido aquí en el chunk setup para que SIEMPRE esté disponible
+# en el ambiente global, incluso cuando se corren chunks fuera de
+# orden interactivamente. Esto evita el error
+# "objeto 'df_modelo_listo' no encontrado" al evaluar las cabeceras
+# de chunks con `eval = !df_modelo_listo`.
+df_modelo_listo <- file.exists("df_modelo.rds")
+```
+
+------------------------------------------------------------------------
+
+# Introducción
+
+El desempleo es uno de los fenómenos socioeconómicos más relevantes en
+Colombia. Según la Gran Encuesta Integrada de Hogares (GEIH) del DANE,
+la tasa de desempleo nacional ha oscilado entre el 9% y el 12% en los
+últimos años, afectando de manera desproporcionada a jóvenes, mujeres y
+personas con bajos niveles educativos.
+
+Este proyecto aplica técnicas de minería de datos para identificar los
+factores sociodemográficos y laborales que hacen más probable que una
+persona en edad de trabajar se encuentre desempleada, construyendo
+modelos predictivos que puedan apoyar la toma de decisiones en política
+pública y diseño de programas de empleo.
+
+**Pregunta problema:** ¿Qué características sociodemográficas y
+laborales hacen más probable que una persona en edad de trabajar se
+encuentre desempleada en Colombia?
+
+**Objetivo general:** Predecir la probabilidad de desempleo de una
+persona a partir de su perfil sociodemográfico y laboral, e identificar
+los factores de riesgo más relevantes usando técnicas de clasificación
+supervisada.
+
+------------------------------------------------------------------------
+
+# Librerías y versiones
+
+A continuación se cargan todas las librerías necesarias para la
+ejecución del proyecto. Se especifican las versiones utilizadas para
+garantizar la reproducibilidad del análisis.
+
+```{r librerias2}
+# Solo los paquetes que usa el EDA de la Entrega 1
+library(tidyverse)      # dplyr, ggplot2, tidyr, readr, etc.
+library(lubridate)      # manejo de fechas
+library(plotly)         # gráficas interactivas
+library(knitr)          # tablas en Markdown
+library(kableExtra)     # tablas con formato
+library(data.table)     # carga rápida de los CSV (fread/rbindlist)
+
+# Versión de R
+R.version$version.string
+```
+
+------------------------------------------------------------------------
+
+# Fuente de datos
+
+Los datos provienen de la **Gran Encuesta Integrada de Hogares (GEIH)
+2023–2025** del Departamento Administrativo Nacional de Estadística
+(DANE), disponibles gratuitamente en
+[microdatos.dane.gov.co](https://microdatos.dane.gov.co/index.php/catalog/).
+
+La GEIH es la principal fuente de información sobre el mercado laboral
+colombiano. Se aplica de forma continua durante todo el año a una
+muestra representativa de hogares a nivel nacional, departamental y de
+las principales ciudades.
+
+Se utilizan los siguientes módulos: \| Módulo \| Descripción \|
+\|-----------------------------\|----------------------------------------------------------\|
+\| Características generales, seguridad social en salud y educación \|
+Edad, sexo, parentesco, estado civil, orientación sexual, identidad de
+género, pertenencia étnica, identidad campesina, afiliación en salud,
+discapacidad, nivel educativo, asistencia escolar \| \| Datos del hogar
+y la vivienda \| Tipo de vivienda, materiales de construcción, servicios
+públicos, condiciones del hogar (sanitario, agua, cocina), tenencia,
+valor y arriendo estimado, productos financieros del hogar \| \| Fuerza
+de trabajo \| Condición de actividad (ocupado, desocupado, inactivo),
+búsqueda de empleo, disponibilidad para trabajar, razones de
+inactividad, historial laboral reciente \| \| Migración \| Lugar de
+nacimiento, nacionalidad, residencia hace 5 años y 12 meses, experiencia
+en el exterior, motivos de cambio de residencia, intención de
+permanencia en Colombia \| \| No ocupados \| Semanas buscando empleo,
+tipo de búsqueda, disponibilidad, salario de reserva, experiencia
+laboral previa, subsidio de desempleo, cotización a pensiones, ingresos
+laborales recientes \| \| Ocupados \| Tipo de contrato, posición
+ocupacional, horas trabajadas, ingresos laborales (salario, especie,
+subsidios, primas), características del empleador, actividad económica,
+empleo secundario, satisfacción laboral, afiliación a seguridad social
+\| \| Otras formas de trabajo \| Trabajo doméstico no remunerado
+(cocinar, lavar, limpiar), cuidado de niños, enfermos y adultos mayores,
+apoyo escolar, pasantías, producción para autoconsumo, voluntariado,
+participación comunitaria \| \| Otros ingresos e impuestos \| Arriendos
+recibidos, pensiones, remesas del exterior, transferencias de gobierno
+(Familias en Acción, Jóvenes en Acción, Colombia Mayor), intereses,
+cesantías, impuestos predial, de vehículos y de renta \|
+
+------------------------------------------------------------------------
+
+## Variables por módulo
+
+### Características generales, seguridad social en salud y educación
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| PERIODO | Periodo de la encuesta |
+| MES | Mes de referencia de la encuesta |
+| PER | Período de la encuesta |
+| DIRECTORIO | Identificador de la encuesta |
+| SECUENCIA_P | Secuencia padre |
+| ORDEN | Número de orden de la persona en el hogar |
+| HOGAR | Identificador del hogar dentro de la vivienda |
+| REGIS | Número de registro |
+| AREA | Área geográfica (cabecera, centro poblado, rural disperso) |
+| CLASE | Clase de área (urbana/rural) |
+| FEX_C18 | Factor de expansión de personas de 18 años y más |
+| DPTO | Código del departamento |
+| PT | Período trimestral |
+| P6016 | Número de orden de la persona que proporciona la información |
+| P3271 | Sexo al nacer |
+| P6040 | Edad en años cumplidos |
+| P6030S1 | Mes de nacimiento |
+| P6030S3 | Año de nacimiento |
+| P6050 | Parentesco con el jefe o jefa del hogar |
+| P6083 | Indicador de si la madre reside en el hogar |
+| P6083S1 | Número de orden de la madre en el hogar |
+| P6081 | Indicador de si el padre reside en el hogar |
+| P6081S1 | Número de orden del padre en el hogar |
+| P2057 | Autorreconocimiento como campesino(a) |
+| P2059 | Si alguna vez se consideró campesino(a) |
+| P2061 | Si considera que la comunidad donde vive es campesina |
+| P6080 | Pertenencia étnica o autorreconocimiento cultural |
+| P6080S1 | Pueblo o etnia indígena a la que pertenece |
+| P6080S1A1 | Especificación del pueblo o etnia |
+| P6070 | Estado conyugal actual |
+| P6071 | Indicador de si el cónyuge reside en el hogar |
+| P6071S1 | Número de orden del cónyuge en el hogar |
+| P3147S1 | Dificultad por COVID-19: acceso a alimentos |
+| P3147S2 | Dificultad por COVID-19: acceso a medicamentos |
+| P3147S3 | Dificultad por COVID-19: pago de arriendo o servicios |
+| P3147S4 | Dificultad por COVID-19: pérdida de empleo |
+| P3147S5 | Dificultad por COVID-19: cierre del negocio |
+| P3147S6 | Dificultad por COVID-19: dificultad para estudiar |
+| P3147S7 | Dificultad por COVID-19: problemas de salud mental |
+| P3147S8 | Dificultad por COVID-19: violencia intrafamiliar |
+| P3147S9 | Dificultad por COVID-19: otra dificultad |
+| P3147S10 | Dificultad por COVID-19: ninguna |
+| P3147S11 | Dificultad por COVID-19: no sabe/no informa |
+| P3147S10A1 | Especificación de otra dificultad por COVID-19 |
+| P6090 | Afiliación a seguridad social en salud (EPS o ARS) |
+| P6100 | Régimen de afiliación en salud (contributivo, subsidiado, especial) |
+| P6110 | Quién paga mensualmente la afiliación en salud |
+| P6120 | Valor mensual pagado o descontado por afiliación en salud |
+| P1906S1 | Dificultad para oír, aún con audífonos |
+| P1906S2 | Dificultad para hablar o conversar |
+| P1906S3 | Dificultad para ver, aún con lentes |
+| P1906S4 | Dificultad para mover el cuerpo, caminar o subir escaleras |
+| P1906S5 | Dificultad para agarrar o mover objetos con las manos |
+| P1906S6 | Dificultad para entender, aprender, recordar o tomar decisiones |
+| P1906S7 | Dificultad para comer, vestirse o bañarse por sí mismo(a) |
+| P1906S8 | Dificultad para relacionarse o interactuar con otras personas |
+| P6160 | Sabe leer y escribir |
+| P6170 | Asistencia actual a una institución educativa |
+| P3041 | Tipo de institución educativa a la que asiste (pública/privada) |
+| P3042 | Mayor nivel educativo alcanzado y último grado o semestre aprobado |
+| P3042S1 | Año o grado del nivel educativo alcanzado |
+| P3042S2 | Área o disciplina del nivel educativo alcanzado |
+| P3043 | Título o diploma de mayor nivel educativo recibido |
+| P3043S1 | Área o disciplina del título recibido |
+| P3038 | Atracción sexual o romántica (orientación sexual) |
+| P3039 | Identidad de género |
+| POB_MAY18 | Indicador de población mayor de 18 años |
+
+------------------------------------------------------------------------
+
+### Datos del hogar y la vivienda
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| PERIODO | Periodo de la encuesta |
+| MES | Mes de referencia de la encuesta |
+| PER | Período de la encuesta |
+| DIRECTORIO | Identificador de la encuesta |
+| SECUENCIA_P | Secuencia padre |
+| HOGAR | Identificador del hogar dentro de la vivienda |
+| REGIS | Número de registro |
+| AREA | Área geográfica (cabecera, centro poblado, rural disperso) |
+| CLASE | Clase de área (urbana/rural) |
+| FEX_C18 | Factor de expansión de personas de 18 años y más |
+| DPTO | Código del departamento |
+| P4000 | Tipo de vivienda |
+| P4010 | Material predominante de las paredes exteriores |
+| P4020 | Material predominante de los pisos |
+| P4030S1 | Disponibilidad de energía eléctrica |
+| P4030S1A1 | Estrato para tarifa de energía eléctrica |
+| P4030S2 | Disponibilidad de gas natural conectado a red pública |
+| P4030S3 | Disponibilidad de alcantarillado |
+| P4030S4 | Disponibilidad de recolección de basuras |
+| P4030S4A1 | Frecuencia de recolección de basuras (veces por semana) |
+| P4030S5 | Disponibilidad de acueducto |
+| P70 | Número de hogares en la vivienda |
+| P5000 | Total de cuartos disponibles en el hogar (incluye sala-comedor) |
+| P5010 | Cuartos usados para dormir |
+| P5020 | Tipo de servicio sanitario que utiliza el hogar |
+| P5030 | Uso compartido o exclusivo del servicio sanitario |
+| P5040 | Forma principal de eliminación de basuras |
+| P5050 | Fuente principal de agua para consumo humano |
+| P5070 | Lugar donde se preparan los alimentos |
+| P5080 | Energía o combustible principal para cocinar |
+| P5090 | Tenencia de la vivienda (propia, arrendada, usufructo, etc.) |
+| P5090S1 | Especificación del tipo de tenencia |
+| P5100 | Valor mensual de cuota de amortización de crédito hipotecario |
+| P5110 | Precio mínimo estimado de venta de la vivienda |
+| P5130 | Valor estimado de arriendo mensual si tuviera que pagarlo |
+| P5140 | Valor mensual de arriendo pagado actualmente |
+| P5222S1 | Uso de cuenta corriente en el hogar |
+| P5222S2 | Uso de cuenta de ahorros en el hogar |
+| P5222S3 | Uso de CDT en el hogar |
+| P5222S4 | Tenencia de préstamo para compra de vivienda |
+| P5222S5 | Tenencia de préstamo para compra de vehículo |
+| P5222S6 | Tenencia de préstamo de libre inversión |
+| P5222S7 | Uso de tarjeta de crédito en el hogar |
+| P5222S8 | Uso de otro producto financiero en el hogar |
+| P5222S9 | Ningún producto financiero en el hogar |
+| P5222S10 | No sabe si tiene productos financieros |
+| P5222S8A1 | Especificación del otro producto financiero |
+| P6008 | Total de personas en el hogar |
+
+------------------------------------------------------------------------
+
+### Fuerza de trabajo
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| PERIODO | Periodo de la encuesta |
+| MES | Mes de referencia de la encuesta |
+| PER | Período de la encuesta |
+| DIRECTORIO | Identificador de la encuesta |
+| SECUENCIA_P | Secuencia padre |
+| ORDEN | Número de orden de la persona en el hogar |
+| HOGAR | Identificador del hogar dentro de la vivienda |
+| REGIS | Número de registro |
+| AREA | Área geográfica (cabecera, centro poblado, rural disperso) |
+| CLASE | Clase de área (urbana/rural) |
+| FEX_C18 | Factor de expansión de personas de 18 años y más |
+| DPTO | Código del departamento |
+| FT | Indicador de pertenencia a la fuerza de trabajo (ocupado o desocupado) |
+| FFT | Indicador de estar fuera de la fuerza de trabajo (inactivo) |
+| PET | Indicador de población en edad de trabajar (15 años y más en GEIH 2025) |
+| P6240 | Actividad principal realizada la semana pasada |
+| P6240S1 | Especificación de la actividad principal de la semana pasada |
+| P6240S2 | Si recibió remuneración en dinero o especie por esa actividad |
+| P6250 | Si realizó alguna actividad paga por una hora o más la semana pasada |
+| P6260 | Si tenía trabajo o negocio generador de ingresos, aunque no haya trabajado la semana pasada |
+| P6260S1 | Razón por la que no trabajó la semana pasada (teniendo empleo) |
+| P6260S1A1 | Especificación de la razón de ausencia laboral |
+| P6260S2 | Tiempo estimado de ausencia del trabajo |
+| P6270 | Si trabajó sin remuneración en empresa o negocio familiar la semana pasada |
+| P6280 | Si hizo diligencias para buscar trabajo o instalar negocio en las últimas 4 semanas |
+| P6290 | Actividad principal para conseguir empleo en las últimas 4 semanas |
+| P3362S1 | Buscó empleo pidiendo ayuda a familiares o amigos |
+| P3362S2 | Buscó empleo visitando empresas o enviando hojas de vida |
+| P3362S3 | Usó agencias de empleo, SENA o Servicio Público de Empleo |
+| P3362S4 | Buscó empleo por avisos clasificados |
+| P3362S5 | Buscó empleo presentándose a convocatorias |
+| P3362S6 | Hizo preparativos para iniciar un negocio |
+| P3362S7 | Buscó empleo por otro medio |
+| P3362S8 | No sabe/no informa cómo buscó empleo |
+| P3362S7A1 | Especificación del otro medio de búsqueda de empleo |
+| P6300 | Si desea conseguir un trabajo remunerado o instalar un negocio |
+| P6310 | Razón principal por la que no buscó empleo aunque desea trabajar |
+| P6310S1 | Especificación de la razón de no búsqueda |
+| P6320 | Si trabajó al menos 2 semanas consecutivas en los últimos 12 meses |
+| P6330 | Si ha hecho diligencias para buscar trabajo después de su último empleo |
+| P6340 | Si ha buscado trabajo o negocio en los últimos 12 meses |
+| P6350 | Meses transcurridos desde que dejó de buscar trabajo por última vez |
+| P6351 | Si estaba disponible para trabajar la semana pasada si le hubiera resultado empleo |
+
+------------------------------------------------------------------------
+
+### Migración
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| PERIODO | Periodo de la encuesta |
+| MES | Mes de referencia de la encuesta |
+| PER | Período de la encuesta |
+| DIRECTORIO | Identificador de la encuesta |
+| SECUENCIA_P | Secuencia padre |
+| ORDEN | Número de orden de la persona en el hogar |
+| HOGAR | Identificador del hogar dentro de la vivienda |
+| REGIS | Número de registro |
+| AREA | Área geográfica (cabecera, centro poblado, rural disperso) |
+| CLASE | Clase de área (urbana/rural) |
+| FEX_C18 | Factor de expansión de personas de 18 años y más |
+| DPTO | Código del departamento |
+| P3373 | País o región de nacimiento |
+| P3373S1 | Departamento de nacimiento |
+| P3373S2 | Municipio de nacimiento |
+| P3373S3 | País extranjero de nacimiento |
+| P3373S3A1 | Año de llegada a Colombia por última vez |
+| P3373S3A2 | Mes de llegada a Colombia por última vez |
+| P3374 | Nacionalidad |
+| P3374S1 | Municipio de residencia hace 5 años |
+| P3374S2 | Departamento de residencia hace 5 años |
+| P3374S3 | País de residencia hace 5 años (si era en el exterior) |
+| P3375S1 | Tiempo de intención de quedarse en Colombia (meses) |
+| P3376 | Si alguna vez vivió en otro(s) país(es) por más de 6 meses |
+| P3377 | Si trabajó mientras estuvo viviendo en el exterior |
+| P3378 | País al que viajó por última vez a trabajar |
+| P3378S1 | Duración del trabajo en ese país (meses) |
+| P3379 | Año en que viajó a ese país a trabajar |
+| P3380 | Año en que salió de ese país |
+| P3381 | Año en que volvió a vivir en Colombia |
+| P3382 | Lugar de residencia hace 5 años |
+| P3382S1 | Departamento de residencia hace 5 años |
+| P3382S2 | Municipio de residencia hace 5 años |
+| P3382S3 | País extranjero de residencia hace 5 años |
+| P3383 | Tipo de lugar de residencia hace 5 años (urbano/rural) |
+| P3384 | Lugar de residencia hace 12 meses |
+| P3384S1 | Departamento de residencia hace 12 meses |
+| P3384S2 | Municipio de residencia hace 12 meses |
+| P3384S3 | País extranjero de residencia hace 12 meses |
+| P3385 | Tipo de lugar de residencia hace 12 meses (urbano/rural) |
+| P3386 | Motivo principal del cambio de residencia en los últimos 12 meses |
+| P3386S1 | Especificación del motivo de cambio de residencia |
+| P3375 | Si tiene intención de quedarse a vivir en Colombia |
+
+------------------------------------------------------------------------
+
+### No ocupados
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| PERIODO | Periodo de la encuesta |
+| MES | Mes de referencia de la encuesta |
+| PER | Período de la encuesta |
+| DIRECTORIO | Identificador de la encuesta |
+| SECUENCIA_P | Secuencia padre |
+| ORDEN | Número de orden de la persona en el hogar |
+| HOGAR | Identificador del hogar dentro de la vivienda |
+| REGIS | Número de registro |
+| AREA | Área geográfica (cabecera, centro poblado, rural disperso) |
+| CLASE | Clase de área (urbana/rural) |
+| FEX_C18 | Factor de expansión de personas de 18 años y más |
+| DPTO | Código del departamento |
+| FFT | Indicador de estar fuera de la fuerza de trabajo (inactivo) |
+| DSCY | Indicador de desocupado con experiencia laboral previa |
+| DSI | Indicador de desocupado sin experiencia laboral |
+| P7250 | Semanas buscando trabajo (desocupado) |
+| P7280 | Si ha buscado trabajo como asalariado, independiente o cualquiera |
+| P744 | Disponibilidad para trabajar la semana pasada si hubiera resultado empleo |
+| P3074 | Disponibilidad futura para trabajar si resultara un empleo |
+| P7260 | Horas a la semana disponibles para trabajar |
+| P1806 | Salario mínimo mensual aceptable para aceptar un empleo (salario de reserva) |
+| P7430 | Si ha trabajado alguna vez al menos dos semanas consecutivas |
+| P7440S1 | Meses desde que trabajó por última vez |
+| P7440S2 | Semanas desde que trabajó por última vez |
+| P7450 | Motivo principal por el que dejó su último trabajo |
+| P7350 | Posición ocupacional en el último trabajo |
+| P7360 | Actividad económica del último trabajo |
+| P9460 | Si recibe actualmente subsidio de desempleo |
+| P1519 | Si cotiza actualmente a un fondo de pensiones |
+| P1883 | Fondo de pensiones al que cotiza actualmente |
+| P7422 | Si recibió ingresos por concepto de trabajo el mes pasado |
+| P7422S1 | Valor de los ingresos laborales recibidos el mes pasado |
+| OFICIO1_C8 | Oficio principal del último empleo clasificado (CIUO-08) |
+| OFICIO2_C8 | Oficio secundario del último empleo clasificado (CIUO-08) |
+| RAMA2D_D_R4 | Rama de actividad del último empleo a 2 dígitos (CIIU Rev.4) |
+| RAMA4D_D_R4 | Rama de actividad del último empleo a 4 dígitos (CIIU Rev.4) |
+| P7440 | Tiempo transcurrido desde que trabajó por última vez (codificado) |
+
+------------------------------------------------------------------------
+
+### Ocupados
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| PERIODO | Periodo de la encuesta |
+| MES | Mes de referencia de la encuesta |
+| PER | Período de la encuesta |
+| DIRECTORIO | Identificador de la encuesta |
+| SECUENCIA_P | Secuencia padre |
+| ORDEN | Número de orden de la persona en el hogar |
+| HOGAR | Identificador del hogar dentro de la vivienda |
+| REGIS | Número de registro |
+| AREA | Área geográfica (cabecera, centro poblado, rural disperso) |
+| CLASE | Clase de área (urbana/rural) |
+| FEX_C18 | Factor de expansión de personas de 18 años y más |
+| DPTO | Código del departamento |
+| FT | Indicador de pertenencia a la fuerza de trabajo |
+| P3044S2 | Rama de actividad económica del empleo principal |
+| P6440 | Si tiene algún tipo de contrato (verbal o escrito) |
+| P6450 | Tipo de contrato: verbal o escrito |
+| P6460 | Contrato a término indefinido o a término fijo |
+| P6460S1 | Duración del contrato a término fijo (meses) |
+| P6400 | Si la empresa contratante es la misma donde trabaja |
+| P6410 | Tipo de empresa que contrató al trabajador |
+| P6422 | Conformidad con el tipo de contrato |
+| P6420S2 | Rama de actividad de la empresa contratante |
+| P6424S1 | Derecho a prima de servicios por contrato actual |
+| P6424S2 | Derecho a vacaciones pagadas por contrato actual |
+| P6424S3 | Derecho a cesantías por contrato actual |
+| P6424S5 | Derecho a otros beneficios por contrato actual |
+| P6426 | Antigüedad en la empresa actual (meses) |
+| P6430 | Posición ocupacional en el trabajo principal |
+| P6430S1 | Especificación de la posición ocupacional |
+| P3045S1 | Si la empresa está registrada ante Cámara de Comercio |
+| P3045S2 | Si la empresa tiene RUT |
+| P3045S3 | Si la empresa lleva contabilidad formal |
+| P3046 | Si la empresa tiene oficina de contabilidad o contador |
+| P3363 | Medio principal por el que consiguió el empleo actual |
+| P9440 | Si el empleo actual fue obtenido a través de internet |
+| P6500 | Ingreso laboral del mes pasado en el empleo principal (antes de descuentos) |
+| P3364 | Si le aplicaron retención en la fuente sobre los ingresos del mes pasado |
+| P3364S1 | Valor de la retención en la fuente aplicada |
+| P6510 | Si recibió ingresos por horas extras el mes pasado |
+| P6510S1 | Valor recibido por horas extras el mes pasado |
+| P6510S2 | Indicador adicional de horas extras |
+| P6590 | Si recibió alimentos como pago en especie el mes pasado |
+| P6590S1 | Valor estimado de alimentos recibidos como pago en especie |
+| P6600 | Si recibió vivienda como pago en especie el mes pasado |
+| P6600S1 | Valor estimado de la vivienda recibida como pago en especie |
+| P6610 | Si utiliza transporte de la empresa para desplazarse al trabajo |
+| P6610S1 | Valor estimado del transporte provisto por la empresa |
+| P6620 | Si recibió otros ingresos en especie el mes pasado |
+| P6620S1 | Valor estimado de otros ingresos en especie |
+| P6585S1 | Si recibió subsidio de alimentación el mes pasado |
+| P6585S1A1 | Valor del subsidio de alimentación |
+| P6585S1A2 | Indicador adicional de subsidio de alimentación |
+| P6585S2 | Si recibió subsidio de transporte el mes pasado |
+| P6585S2A1 | Valor del subsidio de transporte |
+| P6585S2A2 | Indicador adicional de subsidio de transporte |
+| P6585S3 | Si recibió subsidio de vivienda el mes pasado |
+| P6585S3A1 | Valor del subsidio de vivienda |
+| P6585S3A2 | Indicador adicional de subsidio de vivienda |
+| P6585S4 | Si recibió otro subsidio el mes pasado |
+| P6585S4A1 | Valor del otro subsidio |
+| P6585S4A2 | Especificación del otro subsidio |
+| P6545 | Si recibió dotación de ropa o calzado el mes pasado |
+| P6545S1 | Valor estimado de la dotación recibida |
+| P6545S2 | Indicador adicional de dotación |
+| P6580 | Si recibió otros beneficios monetarios el mes pasado |
+| P6580S1 | Valor de otros beneficios monetarios |
+| P6580S2 | Especificación de otros beneficios |
+| P6630S1 | Si recibió prima de servicios en los últimos 12 meses |
+| P6630S1A1 | Valor de la prima de servicios |
+| P6630S2 | Si recibió prima de navidad en los últimos 12 meses |
+| P6630S2A1 | Valor de la prima de navidad |
+| P6630S3 | Si recibió prima de vacaciones en los últimos 12 meses |
+| P6630S3A1 | Valor de la prima de vacaciones |
+| P6630S4 | Si recibió bonificaciones en los últimos 12 meses |
+| P6630S4A1 | Valor de las bonificaciones |
+| P6630S6 | Si recibió otros pagos anuales en los últimos 12 meses |
+| P6630S6A1 | Valor de otros pagos anuales |
+| P6640 | Si trabajó horas extras remuneradas la semana pasada |
+| P6640S1 | Número de horas extras remuneradas la semana pasada |
+| P1800 | Si tiene empleados o personas que le ayudan en su negocio |
+| P1800S1 | Número de empleados o personas que le ayudan |
+| P1801S1 | Número de trabajadores que reciben pago en el negocio |
+| P1801S2 | Número de socios en el negocio |
+| P1801S3 | Número de trabajadores o familiares sin remuneración |
+| P1802 | Forma en que ofrece sus servicios o productos |
+| P3047 | Quién decide sobre el horario de trabajo |
+| P3048 | Quién decide qué producir o vender |
+| P3049 | Quién decide el precio de bienes o servicios |
+| P6765 | Forma de trabajo realizada la semana pasada (presencial, teletrabajo, etc.) |
+| P6765S1 | Especificación de la forma de trabajo |
+| P3051 | Ingresos por honorarios profesionales el mes pasado |
+| P3051S1 | Confirmación del valor de honorarios profesionales |
+| P3052 | Ingresos por comisiones el mes pasado |
+| P3052S1 | Confirmación del valor de comisiones |
+| P3053 | Número de meses al que corresponden los ingresos por comisiones |
+| P3365 | Si le aplicaron retención en la fuente (trabajadores independientes) |
+| P3365S1 | Valor de la retención en la fuente (independientes) |
+| P3054 | Si recibió alimentos como pago en especie (independientes) |
+| P3054S1 | Valor estimado de alimentos en especie (independientes) |
+| P3055 | Si recibió vivienda como pago en especie (independientes) |
+| P3055S1 | Valor estimado de vivienda en especie (independientes) |
+| P3056 | Valor de ventas o ingresos totales del negocio el mes pasado |
+| P3057 | Confirmación de ventas o ingresos totales del negocio el mes pasado |
+| P6760 | Número de meses al que corresponden los ingresos del negocio |
+| P3058S1 | Gastos en salarios u honorarios del negocio el mes pasado |
+| P3058S2 | Gastos en insumos y mercancías del negocio el mes pasado |
+| P3058S3 | Gastos en arrendamiento del local o bodega el mes pasado |
+| P3058S4 | Gastos en servicios básicos del negocio el mes pasado |
+| P3058S5 | Gastos en transporte, combustible y mantenimiento del negocio |
+| P3059 | Ingresos por ventas agropecuarias o mineras en los últimos 12 meses |
+| P3061 | Número de meses al que corresponden los ingresos agropecuarios |
+| P3062S1 | Pago a trabajadores en la actividad agropecuaria (12 meses) |
+| P3062S2 | Pago a servicios profesionales en la actividad agropecuaria |
+| P3062S3 | Pago en transporte y alquiler de maquinaria agropecuaria |
+| P3062S4 | Pago en combustibles y mantenimiento de maquinaria agropecuaria |
+| P3062S5 | Pago en insumos agrícolas (abonos, semillas, etc.) |
+| P3062S6 | Pago en vacunas y productos veterinarios |
+| P3062S7 | Compra de animales o reproductores |
+| P3062S8 | Pago en alimentos y suplementos para animales |
+| P3062S9 | Pago en arrendamiento de tierras |
+| P3063 | Si tomó productos del cultivo o producción para consumo del hogar |
+| P3063S1 | Valor estimado de lo consumido del propio cultivo o producción |
+| P3064 | Si es propietario de la tierra o granja donde trabaja |
+| P3064S1 | Arriendo mensual estimado de la tierra si tuviera que pagarlo |
+| P3065 | Si la empresa o negocio tiene registro mercantil (asalariados) |
+| P3066 | Si la empresa cuenta con servicios de contador (asalariados) |
+| P3067 | Si ha registrado el negocio ante la Cámara de Comercio (independientes) |
+| P3067S1 | Si ha renovado el registro mercantil |
+| P3067S2 | Último año en que renovó el registro |
+| P6775 | Si el negocio lleva contabilidad o libro de registro diario |
+| P3068 | Si la contabilidad permite separar gastos del negocio y del hogar |
+| P6750 | Ganancia neta o honorarios netos del negocio el mes pasado |
+| P3073 | Número de meses al que corresponde la ganancia neta |
+| P550 | Ganancia neta del negocio o cosecha en los últimos 12 meses |
+| P6780 | Tipo de trabajo: formal, informal, otro |
+| P6780S1 | Especificación del tipo de trabajo |
+| P1879 | Razón principal para trabajar de forma independiente |
+| P1805 | Si aceptaría empleo asalariado con las mismas condiciones económicas pero con prestaciones |
+| P6790 | Meses trabajados en los últimos 12 meses |
+| P6800 | Horas trabajadas normalmente a la semana en el empleo principal |
+| P6810 | Razón para trabajar menos de 40 horas a la semana |
+| P6810S1 | Especificación de la razón de jornada reducida |
+| P6850 | Horas trabajadas la semana pasada en el empleo principal |
+| P6830 | Razón por la que no trabajó todas las horas habituales la semana pasada |
+| P6830S1 | Especificación de la razón de ausencia parcial |
+| P3366 | Si la razón de ausencia está asociada a la pandemia de COVID-19 |
+| P3069 | Total de personas en la empresa o negocio donde trabaja |
+| P6880 | Lugar principal donde realiza el trabajo |
+| P6880S1 | Especificación del lugar de trabajo |
+| P6915 | Forma de cubrir costos médicos en caso de enfermedad (independientes) |
+| P6915S1 | Especificación de la forma de cubrir costos médicos |
+| P6920 | Si cotiza actualmente a un fondo de pensiones |
+| P6930 | Fondo de pensiones al que cotiza |
+| P6940 | Quién paga mensualmente la afiliación al fondo de pensiones |
+| P6960 | Años cotizando al fondo de pensiones |
+| P6990 | Si está afiliado a una Aseguradora de Riesgos Laborales (ARL) |
+| P9450 | Si está afiliado a una caja de compensación familiar |
+| P7020 | Si tuvo otro trabajo antes del actual |
+| P760 | Meses sin empleo entre el trabajo actual y el anterior |
+| P7026 | Duración en el empleo anterior |
+| P7028 | Posición ocupacional en el empleo anterior |
+| P7028S1 | Especificación de la posición en el empleo anterior |
+| P1880 | Razón principal por la que dejó el empleo anterior |
+| P1880S1 | Especificación de la razón de salida del empleo anterior |
+| P7040 | Si tenía otro trabajo o negocio adicional la semana pasada |
+| P7045 | Horas trabajadas en el segundo trabajo la semana pasada |
+| P7050 | Posición ocupacional en el segundo trabajo |
+| P7070 | Ingresos o ganancias del segundo trabajo el mes pasado |
+| P7075 | Total de personas en la empresa del segundo trabajo |
+| P7077 | Lugar donde realiza el segundo trabajo |
+| P7090 | Si desea trabajar más horas de las que trabaja actualmente |
+| P7100 | Horas adicionales disponibles para trabajar a la semana |
+| P7110 | Si hizo diligencias para trabajar más horas en las últimas 4 semanas |
+| P7120 | Si estaba disponible para trabajar más horas la semana pasada |
+| P7130 | Si desea cambiar el trabajo actual |
+| P7140S1 | Motivo de cambio de trabajo: mejorar utilización de capacidades |
+| P7140S2 | Motivo de cambio de trabajo: mejorar ingresos |
+| P7140S3 | Motivo de cambio de trabajo: trabajar menos horas |
+| P7140S4 | Motivo de cambio de trabajo: trabajo actual es temporal |
+| P7140S5 | Motivo de cambio de trabajo: problemas en el trabajo |
+| P7140S6 | Motivo de cambio de trabajo: no le gusta el trabajo actual |
+| P7140S7 | Motivo de cambio de trabajo: esfuerzo físico o mental excesivo |
+| P7140S8 | Motivo de cambio de trabajo: problemas ambientales (ruido, temperatura, etc.) |
+| P7140S9 | Motivo de cambio de trabajo: otro motivo |
+| P7150 | Si hizo diligencias para cambiar de trabajo en las últimas 4 semanas |
+| P7160 | Si podría empezar un nuevo empleo antes de un mes |
+| P7170S1 | Satisfacción con el trabajo actual |
+| P7170S5 | Satisfacción con los beneficios y prestaciones recibidas |
+| P7170S6 | Satisfacción con la jornada laboral actual |
+| P7180 | Si está afiliado a una asociación gremial o sindical |
+| P514 | Si considera que su empleo actual es estable |
+| P515 | Si el horario de trabajo es compatible con las responsabilidades familiares |
+| P1881 | Medio de transporte principal para desplazarse al trabajo |
+| P1882 | Tiempo de desplazamiento habitual hacia el trabajo |
+| P7240 | Fuente principal de recursos si no tuviera trabajo |
+| OCI | Indicador de ocupado clasificado |
+| INGLABO | Ingreso laboral total del ocupado |
+| RAMA2D_R4 | Rama de actividad económica del ocupado a 2 dígitos (CIIU Rev.4) |
+| RAMA4D_R4 | Rama de actividad económica del ocupado a 4 dígitos (CIIU Rev.4) |
+| OFICIO_C8 | Oficio del ocupado clasificado según CIUO-08 |
+
+------------------------------------------------------------------------
+
+### Otras formas de trabajo
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| PERIODO | Periodo de la encuesta |
+| MES | Mes de referencia de la encuesta |
+| PER | Período de la encuesta |
+| DIRECTORIO | Identificador de la encuesta |
+| SECUENCIA_P | Secuencia padre |
+| ORDEN | Número de orden de la persona en el hogar |
+| HOGAR | Identificador del hogar dentro de la vivienda |
+| REGIS | Número de registro |
+| AREA | Área geográfica (cabecera, centro poblado, rural disperso) |
+| CLASE | Clase de área (urbana/rural) |
+| FEX_C18 | Factor de expansión de personas de 18 años y más |
+| DPTO | Código del departamento |
+| P3076S1 | Días dedicados a cocinar/lavar platos en el propio hogar |
+| P3076S1A1 | Días por semana dedicados a cocinar en el propio hogar |
+| P3076S1A2 | Horas diarias dedicadas a cocinar en el propio hogar |
+| P3076S2 | Si cocinó o lavó platos en hogares de familiares la semana pasada |
+| P3076S2A1 | Días por semana dedicados a cocinar en hogares de familiares |
+| P3076S2A2 | Horas diarias dedicadas a cocinar en hogares de familiares |
+| P3076S3 | Si cocinó o lavó platos en hogares de no familiares la semana pasada |
+| P3076S3A1 | Días por semana dedicados a cocinar en hogares de no familiares |
+| P3076S3A2 | Horas diarias dedicadas a cocinar en hogares de no familiares |
+| P3077S1 | Si lavó, planchó o reparó ropa en el propio hogar |
+| P3077S1A1 | Días por semana dedicados al lavado/planchado en el propio hogar |
+| P3077S1A2 | Horas diarias dedicadas al lavado/planchado en el propio hogar |
+| P3077S2 | Si lavó o planchó ropa en hogares de familiares |
+| P3077S2A1 | Días por semana dedicados al lavado en hogares de familiares |
+| P3077S2A2 | Horas diarias dedicadas al lavado en hogares de familiares |
+| P3077S3 | Si lavó o planchó ropa en hogares de no familiares |
+| P3077S3A1 | Días por semana dedicados al lavado en hogares de no familiares |
+| P3077S3A2 | Horas diarias dedicadas al lavado en hogares de no familiares |
+| P3078S1 | Si limpió o arregló el propio hogar la semana pasada |
+| P3078S1A1 | Días por semana dedicados a limpiar el propio hogar |
+| P3078S1A2 | Horas diarias dedicadas a limpiar el propio hogar |
+| P3078S2 | Si limpió hogares de familiares la semana pasada |
+| P3078S2A1 | Días por semana dedicados a limpiar hogares de familiares |
+| P3078S2A2 | Horas diarias dedicadas a limpiar hogares de familiares |
+| P3078S3 | Si limpió hogares de no familiares la semana pasada |
+| P3078S3A1 | Días por semana dedicados a limpiar hogares de no familiares |
+| P3078S3A2 | Horas diarias dedicadas a limpiar hogares de no familiares |
+| P3079S1 | Si cuidó niños menores de 5 años en el propio hogar |
+| P3079S1A1 | Días por semana dedicados al cuidado de niños en el propio hogar |
+| P3079S1A2 | Horas diarias dedicadas al cuidado de niños en el propio hogar |
+| P3079S2 | Si cuidó niños menores de 5 años en hogares de familiares |
+| P3079S2A1 | Días por semana dedicados al cuidado de niños en hogares de familiares |
+| P3079S2A2 | Horas diarias dedicadas al cuidado de niños en hogares de familiares |
+| P3079S3 | Si cuidó niños menores de 5 años en hogares de no familiares |
+| P3079S3A1 | Días por semana dedicados al cuidado de niños en hogares de no familiares |
+| P3079S3A2 | Horas diarias dedicadas al cuidado de niños en hogares de no familiares |
+| P3081S1 | Si cuidó personas enfermas, discapacitadas o adultos mayores en el propio hogar |
+| P3081S1A1 | Días por semana dedicados al cuidado en el propio hogar |
+| P3081S1A2 | Horas diarias dedicadas al cuidado en el propio hogar |
+| P3081S2 | Si cuidó personas dependientes en hogares de familiares |
+| P3081S2A1 | Días por semana dedicados al cuidado en hogares de familiares |
+| P3081S2A2 | Horas diarias dedicadas al cuidado en hogares de familiares |
+| P3081S3 | Si cuidó personas dependientes en hogares de no familiares |
+| P3081S3A1 | Días por semana dedicados al cuidado en hogares de no familiares |
+| P3081S3A2 | Horas diarias dedicadas al cuidado en hogares de no familiares |
+| P3082S1 | Si ayudó con tareas escolares en el propio hogar |
+| P3082S1A1 | Días por semana dedicados al apoyo escolar en el propio hogar |
+| P3082S1A2 | Horas diarias dedicadas al apoyo escolar en el propio hogar |
+| P3082S2 | Si ayudó con tareas escolares en hogares de familiares |
+| P3082S2A1 | Días por semana dedicados al apoyo escolar en hogares de familiares |
+| P3082S2A2 | Horas diarias dedicadas al apoyo escolar en hogares de familiares |
+| P3082S3 | Si ayudó con tareas escolares en hogares de no familiares |
+| P3082S3A1 | Días por semana dedicados al apoyo escolar en hogares de no familiares |
+| P3082S3A2 | Horas diarias dedicadas al apoyo escolar en hogares de no familiares |
+| P3083 | Si realizó pasantías o prácticas laborales en las últimas 4 semanas |
+| P3083S1 | Horas a la semana dedicadas a la pasantía o práctica |
+| P3084S2 | Rama de actividad de la pasantía o práctica |
+| P3085 | Si tiene contrato de aprendizaje para la práctica |
+| P3086 | Tipo de institución educativa con la que realiza la práctica |
+| P3086S1 | Especificación de la institución educativa |
+| P3087 | Si recibe algún ingreso por la práctica o pasantía |
+| P3087S1 | Valor mensual recibido por la práctica o pasantía |
+| P3088 | Si la práctica o pasantía es requisito de grado |
+| P3089 | Si preparó conservas, quesos o embutidos para consumo del hogar |
+| P3089S1 | Días por semana dedicados a esta actividad |
+| P3089S2 | Horas diarias dedicadas a esta actividad |
+| P3089S3 | Valor estimado de los productos elaborados para el hogar |
+| P3091 | Si elaboró prendas de vestir para el hogar |
+| P3091S1 | Días por semana dedicados a elaborar ropa para el hogar |
+| P3091S2 | Horas diarias dedicadas a elaborar ropa |
+| P3092 | Si trajo agua para uso del hogar (centros poblados y rural) |
+| P3092S1 | Días por semana dedicados a traer agua |
+| P3092S2 | Horas diarias dedicadas a traer agua |
+| P3093 | Si construyó o amplió vivienda propia del hogar |
+| P3093S1 | Días por semana dedicados a la construcción o ampliación |
+| P3093S2 | Horas diarias dedicadas a la construcción o ampliación |
+| P3094 | Si cultivó en huerta casera o parcela para consumo del hogar |
+| P3094S1 | Días por semana dedicados al cultivo para autoconsumo |
+| P3094S2 | Horas diarias dedicadas al cultivo para autoconsumo |
+| P3094S3 | Valor estimado de la producción agrícola para el hogar |
+| P3095 | Si crió animales, cazó o pescó para consumo del hogar |
+| P3095S1 | Días por semana dedicados a la cría o caza para autoconsumo |
+| P3095S2 | Horas diarias dedicadas a esta actividad |
+| P3095S3 | Valor estimado de los animales o productos para el hogar |
+| P3096 | Si extrajo minerales para consumo del hogar |
+| P3096S1 | Días por semana dedicados a la extracción de minerales |
+| P3096S2 | Horas diarias dedicadas a la extracción |
+| P3096S3 | Valor estimado de los minerales extraídos para el hogar |
+| P3097 | Si recogió leña para uso del hogar (centros poblados y rural) |
+| P3097S1 | Días por semana dedicados a recoger leña |
+| P3097S2 | Horas diarias dedicadas a recoger leña |
+| P3098 | Si realizó trabajo voluntario en beneficio del barrio o comunidad |
+| P3098S1 | Días por semana dedicados al voluntariado comunitario |
+| P3098S2 | Horas diarias dedicadas al voluntariado comunitario |
+| P3099 | Si realizó actividades de voluntariado en institución sin ánimo de lucro |
+| P3099S1 | Días por semana dedicados al voluntariado institucional |
+| P3099S2 | Horas diarias dedicadas al voluntariado institucional |
+| P3101 | Si participó en reuniones de asociaciones, sindicatos o juntas comunales |
+| P3101S1 | Días por semana dedicados a participación en organizaciones |
+| P3101S2 | Horas diarias dedicadas a participación en organizaciones |
+
+------------------------------------------------------------------------
+
+### Otros ingresos e impuestos
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| PERIODO | Periodo de la encuesta |
+| MES | Mes de referencia de la encuesta |
+| PER | Período de la encuesta |
+| DIRECTORIO | Identificador de la encuesta |
+| SECUENCIA_P | Secuencia padre |
+| ORDEN | Número de orden de la persona en el hogar |
+| HOGAR | Identificador del hogar dentro de la vivienda |
+| REGIS | Número de registro |
+| AREA | Área geográfica (cabecera, centro poblado, rural disperso) |
+| CLASE | Clase de área (urbana/rural) |
+| FEX_C18 | Factor de expansión de personas de 18 años y más |
+| DPTO | Código del departamento |
+| P7495 | Si recibió algún pago no laboral el mes pasado (arriendos, pensiones, alimentos) |
+| P7500S1 | Si recibió arriendos de propiedades o bienes el mes pasado |
+| P7500S1A1 | Valor recibido por arriendos el mes pasado |
+| P7500S2 | Si recibió pensión o jubilación el mes pasado |
+| P7500S2A1 | Valor de la pensión o jubilación el mes pasado |
+| P7500S3 | Si recibió pensión alimenticia el mes pasado |
+| P7500S3A1 | Valor de la pensión alimenticia el mes pasado |
+| P7505 | Si recibió transferencias u otros ingresos no laborales en los últimos 12 meses |
+| P7510S1 | Si recibió dinero de personas u hogares residentes en Colombia |
+| P7510S1A1 | Valor recibido de personas u hogares en Colombia |
+| P7510S2 | Si recibió remesas del exterior (personas u hogares en el extranjero) |
+| P7510S2A1 | Valor de las remesas del exterior |
+| P7510S3 | Si recibió ayudas en dinero de instituciones nacionales o internacionales |
+| P7510S3A1 | Valor de las ayudas institucionales |
+| P750S1 | Si recibió ayuda de entidades privadas nacionales |
+| P750S1A1 | Valor recibido de entidades privadas nacionales |
+| P750S2 | Si recibió transferencias del gobierno colombiano |
+| P750S2A1 | Valor recibido del gobierno colombiano |
+| P1661S1 | Si recibió transferencia del programa Más Familias en Acción |
+| P1661S1A1 | Valor recibido por Más Familias en Acción |
+| P1661S2 | Si recibió transferencia del programa Jóvenes en Acción |
+| P1661S2A1 | Valor recibido por Jóvenes en Acción |
+| P1661S3 | Si recibió transferencia del programa Colombia Mayor |
+| P1661S3A1 | Valor recibido por Colombia Mayor |
+| P1661S4 | Si recibió transferencia de otro programa gubernamental |
+| P1661S4A1 | Nombre del otro programa gubernamental |
+| P1661S4A2 | Valor recibido del otro programa gubernamental |
+| P750S3 | Si recibió ayuda de entidades fuera del país |
+| P750S3A1 | Valor recibido de entidades fuera del país |
+| P7510S5 | Si recibió intereses de préstamos, CDT o depósitos de ahorro |
+| P7510S5A1 | Valor recibido por intereses financieros |
+| P7510S6 | Si recibió cesantías o intereses a las cesantías |
+| P7510S6A1 | Valor recibido por cesantías |
+| P7510S7 | Si recibió ingresos de otras fuentes (loterías, indemnizaciones, venta de activos, etc.) |
+| P7510S7A1 | Valor recibido de otras fuentes |
+| P3367 | Si es propietario de una o varias propiedades inmuebles |
+| P3368 | Valor pagado por impuesto predial en los últimos 12 meses |
+| P3369 | Valor pagado por impuesto de valorización en los últimos 12 meses |
+| P3370 | Si realizó pago de impuesto de vehículos en los últimos 12 meses |
+| P3370S1 | Valor pagado por impuesto de vehículos |
+| P3371 | Si realizó pago de impuesto de renta y complementarios |
+| P3371S1 | Valor pagado por impuesto de renta |
+| P3371S2 | Número de años al que corresponde el pago del impuesto |
+| P3371S3 | Último año pagado de impuesto de renta |
+| P3371S4 | Monto del pago del último año de impuesto de renta |
+| P3372 | Si pagó impuestos por ganancias en juegos de azar, venta de activos, etc. |
+| P3372S1 | Valor pagado por ese tipo de impuestos |
+
+------------------------------------------------------------------------
+
+# Carga y unión de datos
+
+Los módulos de la GEIH se descargan como archivos `.csv` para los
+últimos 3 años (2023, 2024 y 2025), separados por coma. Para cada año,
+la información se organiza en carpetas que contienen los 12 meses
+correspondientes. Los módulos se unen a **nivel de hogar** con las
+llaves `PERIODO`, `DIRECTORIO`, `SECUENCIA_P` (módulo de vivienda) y a
+**nivel de persona** agregando `ORDEN` (módulos de fuerza de trabajo,
+migración, ocupados, no ocupados, etc.).
+
+```{r carga-datos, eval=TRUE, cache=FALSE}
+# ============================================================
+# CARGA Y UNIÓN COMPLETA DE LA GEIH — 2023, 2024, 2025
+# ============================================================
+
+library(tidyverse)
+
+if (file.exists("df_geih.rds")) {
+  # -- cargar desde disco -----------------------------
+  message("Cargando df_geih desde df_geih.rds (rápido)")
+  df_geih <- readRDS("df_geih.rds")
+  
+} else {
+  # -- CONSTRUIR DESDE LOS CSVs -------------
+  message("Construyendo df_geih desde los CSVs (lento, ~25 min)")
+  
+  # -- 1. Configuración -------------------------------------
+  RUTA_BASE <- "../data/ARCHIVOS"   # ruta relativa: este Rmd vive en eda/, los datos en data/ARCHIVOS (versionados con DVC)
+  anios    <- c("2023", "2024", "2025")
+  meses_es <- c("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre")
+  modulos <- list(
+    generales  = "Características generales, seguridad social en salud y educación",
+    hogar      = "Datos del hogar y la vivienda",
+    fuerza     = "Fuerza de trabajo",
+    migracion  = "Migración",
+    no_ocup    = "No ocupados",
+    ocupados   = "Ocupados",
+    otras      = "Otras formas de trabajo",
+    otros_ing  = "Otros ingresos e impuestos"
+  )
+  LLAVES_HOGAR     <- c("PERIODO", "DIRECTORIO", "SECUENCIA_P")
+  LLAVES_PERSONA   <- c("PERIODO", "DIRECTORIO", "SECUENCIA_P", "ORDEN")
+  COLS_COMPARTIDAS <- c("MES", "PER", "HOGAR", "REGIS", "AREA",
+                        "CLASE", "FEX_C18", "DPTO")
+  
+  # -- 2. Función: leer un módulo ---------------------------
+  # Construye la ruta del CSV del módulo y lo lee. fread detecta solo
+  # el separador (coma o ';') y es rápido para archivos grandes.
+  leer_modulo <- function(anio, mes, nombre_modulo) {
+    ruta <- file.path(RUTA_BASE, anio, paste0(mes, "_", anio),
+                      "CSV", paste0(nombre_modulo, ".csv"))
+    if (!file.exists(ruta)) {
+      message("  [aviso] no existe: ", ruta)
+      return(NULL)
+    }
+    data.table::fread(ruta, showProgress = FALSE,
+                      data.table = FALSE, encoding = "Latin-1")
+  }
+  
+  # -- 3. Función: join limpio ------------------------------
+  # left_join evitando columnas duplicadas: quita de nuevo_df las
+  # columnas que ya existen en base (salvo las llaves) -> sin .x/.y
+  join_limpio <- function(base, nuevo_df, llaves_join) {
+    if (is.null(nuevo_df)) return(base)
+    cols_dup <- setdiff(intersect(names(base), names(nuevo_df)), llaves_join)
+    if (length(cols_dup) > 0) nuevo_df <- nuevo_df %>% select(-all_of(cols_dup))
+    dplyr::left_join(base, nuevo_df, by = llaves_join)
+  }
+  
+  # -- 4. Construir base de un mes/año ----------------------
+  # Espina = módulo 'generales' (nivel persona). El de hogar se une a
+  # nivel HOGAR (se propaga a cada persona); el resto, a nivel PERSONA.
+  construir_base_mes <- function(anio, mes) {
+    mods <- lapply(modulos, function(nm) leer_modulo(anio, mes, nm))
+    names(mods) <- names(modulos)
+    if (is.null(mods$generales)) {
+      message("  [omitido] ", mes, " ", anio, ": falta el módulo 'generales'")
+      return(NULL)
+    }
+    base <- mods$generales
+    base <- join_limpio(base, mods$hogar, LLAVES_HOGAR)
+    for (m in c("fuerza", "migracion", "no_ocup", "ocupados", "otras", "otros_ing")) {
+      base <- join_limpio(base, mods[[m]], LLAVES_PERSONA)
+    }
+    base$ANIO    <- as.integer(anio)
+    base$MES_NUM <- match(mes, meses_es)
+    base
+  }
+  
+  # -- 5. Iterar sobre todos los años y meses ---------------
+  lista_bases <- list()
+  for (anio in anios) {
+    for (mes in meses_es) {
+      clave <- paste0(anio, "_", mes)
+      message("Procesando ", mes, " ", anio, " ...")
+      lista_bases[[clave]] <- construir_base_mes(anio, mes)
+    }
+  }
+  
+  # -- 5.5 Homologar tipos antes de apilar ------------------
+  lista_bases_clean <- lista_bases[!sapply(lista_bases, is.null)]
+  
+  # -- 6. Apilar todos los meses ----------------------------
+  # rbindlist con fill=TRUE tolera columnas distintas entre meses
+  df_geih <- as.data.frame(
+    data.table::rbindlist(lista_bases_clean, use.names = TRUE, fill = TRUE)
+  )
+  saveRDS(df_geih, "df_geih.rds")
+  
+  message("\nBase unificada GEIH lista")
+}
+
+# -- 6.5 Asegurar columnas ANIO y MES_NUM (si el .rds no las trae) -------
+# PERIODO siempre existe (es llave de join). Se derivan año y mes de la
+# columna que esté disponible: MES, o PERIODO en formato AAAAMM / AAAA.
+if (!"ANIO" %in% names(df_geih) || !"MES_NUM" %in% names(df_geih)) {
+  per <- if ("PERIODO" %in% names(df_geih)) as.character(df_geih$PERIODO) else NA_character_
+  # MES_NUM
+  if (!"MES_NUM" %in% names(df_geih)) {
+    if ("MES" %in% names(df_geih)) {
+      df_geih$MES_NUM <- as.integer(df_geih$MES)
+    } else if (all(nchar(per) == 6, na.rm = TRUE)) {
+      df_geih$MES_NUM <- as.integer(substr(per, 5, 6))
+    }
+  }
+  # ANIO
+  if (!"ANIO" %in% names(df_geih)) {
+    if (all(nchar(per) == 6, na.rm = TRUE)) {
+      df_geih$ANIO <- as.integer(substr(per, 1, 4))
+    } else if (all(nchar(per) == 4, na.rm = TRUE)) {
+      df_geih$ANIO <- as.integer(per)
+    } else {
+      for (cand in c("ANO", "AÑO", "ANIO", "year", "YEAR")) {
+        if (cand %in% names(df_geih)) { df_geih$ANIO <- as.integer(df_geih[[cand]]); break }
+      }
+    }
+  }
+}
+
+# -- 7. Verificación (no detiene el knit si faltan columnas) -------------
+if (all(c("ANIO", "MES_NUM") %in% names(df_geih))) {
+  df_geih %>%
+    count(ANIO, MES_NUM, name = "n_personas") %>%
+    arrange(ANIO, MES_NUM) %>%
+    print(n = 40)
+} else {
+  message("No se pudieron derivar ANIO/MES_NUM. Columnas de periodo disponibles:")
+  print(grep("PERIODO|ANIO|ANO|MES|FECHA|TRIM|PER", names(df_geih), value = TRUE, ignore.case = TRUE))
+}
+
+names(df_geih)[str_detect(names(df_geih), "\\.x$|\\.y$")]
+
+# Liberar memoria de objetos intermedios si existen
+for (obj in c("lista_bases", "lista_bases_clean", "tipos_por_df", "tipo_conflicto")) {
+  if (exists(obj)) rm(list = obj)
+}
+gc()
+```
+
+## Verificación de calidad de la base
+
+Antes de iniciar la limpieza propiamente dicha, hacemos dos chequeos
+básicos sobre `df_geih` para confirmar que la base unificada tiene la
+forma esperada: una fila por persona y una composición de hogares
+consistente con la realidad demográfica colombiana.
+
+### Duplicados a nivel persona
+
+Cada persona en la GEIH se identifica de forma única por la combinación
+`PERIODO`, `DIRECTORIO`, `SECUENCIA_P` y `ORDEN`. Verificamos que esta
+unicidad se conserve en la base apilada.
+
+```{r dup-persona, eval=TRUE}
+# Si los joins fueron correctos, ninguna persona debe repetirse
+# en la llave (PERIODO, DIRECTORIO, SECUENCIA_P, ORDEN).
+dup_persona <- df_geih %>%
+  count(PERIODO, DIRECTORIO, SECUENCIA_P, ORDEN, name = "n_repeticiones") %>%
+  filter(n_repeticiones > 1)
+
+cat("Personas duplicadas:", nrow(dup_persona), "\n")
+cat("Filas afectadas    :", sum(dup_persona$n_repeticiones), "\n")
+```
+
+### Composición por hogar
+
+En cambio, sí es esperado que un mismo hogar aparezca varias veces (una
+fila por cada miembro). Verificamos que la distribución del tamaño de
+hogar sea razonable y consistente con la realidad demográfica colombiana
+(promedio ≈ 3 personas por hogar).
+
+```{r dup-hogar, eval=TRUE}
+# Cuantas personas hay en cada hogar (llave del hogar, sin ORDEN).
+hogares_size <- df_geih %>%
+  count(PERIODO, DIRECTORIO, SECUENCIA_P, name = "personas_en_hogar")
+
+cat("Distribucion del tamaño de hogar:\n")
+summary(hogares_size$personas_en_hogar)
+```
+
+> En esta base no se detectaron duplicados a nivel persona, y la
+> distribución de tamaños de hogar coincide con lo esperado: la base
+> está lista para el análisis de faltantes.
+
+------------------------------------------------------------------------
