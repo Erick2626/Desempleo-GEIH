@@ -1048,3 +1048,244 @@ cat("Mediana de faltantes (%)    :", round(median(resumen_falt$pct_falt), 2), "\
 >     - **\<10 %** → imputación simple (mediana / moda).
 >     - **10–50 %** → recodificación como categoría "No informa".
 >     - **\>50 %** → eliminación o tratamiento especial.
+
+------------------------------------------------------------------------
+
+# Construcción del dataset para modelado
+
+## Paso 1 — Filtrar al universo de análisis (PET)
+
+La pregunta de investigación se restringe a personas en edad de trabajar
+(15 años o más, definición vigente del DANE desde 2021). Filtrar aquí,
+además de ser coherente con la metodología oficial, elimina \~23 % de
+los faltantes que en realidad eran "no aplica por edad".
+
+```{r filtrar-pet, eval=TRUE}
+# -- Flag global -------------------------
+df_modelo_listo <- file.exists("df_modelo.rds")
+
+if (df_modelo_listo) {
+  message("Cargando df_modelo desde df_modelo.rds — saltando construcción")
+  df_modelo <- readRDS("df_modelo.rds")
+
+} else {
+  # PET = 1: poblacion 15+ (definicion DANE).
+  df_pet <- df_geih %>% filter(PET == 1)
+
+  cat("Filas totales en GEIH:", format(nrow(df_geih), big.mark = ","), "\n")
+  cat("Filas PET (15+ años) :", format(nrow(df_pet),  big.mark = ","), "\n")
+  cat("Reduccion            :",
+      round(100 * (1 - nrow(df_pet)/nrow(df_geih)), 1), "%\n")
+}
+```
+
+------------------------------------------------------------------------
+
+## Paso 2 — Construir la variable objetivo
+
+Usamos los tres indicadores del DANE para clasificar el estado laboral:
+
+- `OCI == 1` → **Ocupado**
+- `FT == 1 & OCI ≠ 1` → **Desocupado**
+- `FFT == 1` → **Inactivo**
+
+```{r crear-target}
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+} else {
+
+  # Forzamos a numerico (vienen como character desde el CSV).
+  df_pet <- df_pet %>%
+    mutate(
+      OCI = as.numeric(OCI),   # Ocupado
+      FT  = as.numeric(FT),    # Fuerza de trabajo
+      FFT = as.numeric(FFT),   # Fuera de la fuerza de trabajo
+
+      # Reglas DANE en orden de prioridad.
+      estado_laboral = case_when(
+        OCI == 1                              ~ "Ocupado",
+        FT  == 1 & (is.na(OCI) | OCI != 1)    ~ "Desocupado",
+        FFT == 1                              ~ "Inactivo",
+        TRUE                                  ~ NA_character_
+      ),
+
+      # Target binario; el modelo restringira despues a FT activa.
+      desempleado = ifelse(estado_laboral == "Desocupado", 1L, 0L)
+    )
+
+  cat("\nDistribucion del estado laboral:\n")
+  print(table(df_pet$estado_laboral, useNA = "ifany"))
+}
+```
+
+> La tasa oficial se calcula sobre la **fuerza de trabajo** (ocupados +
+> desocupados), excluyendo a los inactivos.
+
+### Tasa de desempleo por año (definición DANE)
+
+```{r tasa-anio, eval=TRUE}
+.df_tasa <- if (df_modelo_listo) df_modelo else df_pet
+
+tasa_desempleo_anual <- .df_tasa %>%
+  filter(estado_laboral %in% c("Ocupado", "Desocupado")) %>%
+  group_by(ANIO) %>%
+  summarise(
+    fuerza_trabajo = n(),
+    desempleados   = sum(estado_laboral == "Desocupado"),
+    tasa_desempleo = round(100 * desempleados / fuerza_trabajo, 2)
+  )
+
+print(tasa_desempleo_anual)
+
+tasa_global <- .df_tasa %>%
+  filter(estado_laboral %in% c("Ocupado", "Desocupado")) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2)) %>%
+  pull(td)
+
+cat("\nTasa de desempleo global (2023-2025):", tasa_global, "%\n")
+
+rm(.df_tasa)
+```
+
+```{r tasa-anio-grafico, eval=TRUE}
+ggplot(tasa_desempleo_anual, aes(x = factor(ANIO), y = tasa_desempleo)) +
+  geom_col(fill = "#2C7FB8", width = 0.6) +
+  geom_text(aes(label = paste0(tasa_desempleo, "%")),
+            vjust = -0.7, size = 5, fontface = "bold", color = "#2C7FB8") +
+  geom_hline(yintercept = tasa_global, linetype = "dashed",
+             color = "firebrick", linewidth = 0.7) +
+  annotate("text",
+           x = 0.7, y = tasa_global + 0.3,
+           label = paste0("Promedio: ", tasa_global, "%"),
+           color = "firebrick", size = 3.5, hjust = 0) +
+  scale_y_continuous(
+    limits = c(0, max(tasa_desempleo_anual$tasa_desempleo) * 1.15),
+    expand = c(0, 0),
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    x        = NULL,
+    y        = "Tasa de desempleo",
+    title    = "Tasa de desempleo en Colombia, 2023 – 2025",
+    subtitle = "Desocupados sobre la fuerza de trabajo (PET activa)",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title         = element_text(face = "bold", size = 14),
+    plot.subtitle      = element_text(color = "gray40",
+                                      margin = ggplot2::margin(b = 10)),
+    plot.caption       = element_text(color = "gray60", hjust = 1),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank()
+  )
+```
+
+------------------------------------------------------------------------
+
+## Paso 3 — Seleccionar variables relevantes
+
+En lugar de modelar con las 546 columnas crudas, escogemos un
+subconjunto justificado teóricamente. Criterios:
+
+- Disponible para **toda** la población PET (no solo ocupados o
+  desocupados).
+- Respaldo en literatura sobre determinantes del desempleo.
+- Porcentaje de faltantes en PET \< 50 %.
+
+```{r seleccionar-vars}
+# si df_modelo ya está cargado, saltamos.
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+} else {
+
+vars_modelo <- c(
+  # -- Llaves e identificacion --
+  "PERIODO", "ANIO", "MES_NUM", "FEX_C18", "DPTO", "CLASE",
+  "DIRECTORIO", "SECUENCIA_P", "ORDEN", "HOGAR",
+  # (Nota: AREA no se incluye — es redundante con CLASE y tiene 27% NA)
+
+  # -- Demograficas --
+  "P3271", "P6040", "P6050", "P6080", "P6070",
+  "P3038", "P3039",
+  "P2057", "P2059", "P2061",   # Autorreconocimiento campesino (actual, pasado, comunidad)
+  "P6083", "P6081", "P6071",   # Madre, padre y conyuge residen en el hogar
+
+  # -- Educacion --
+  "P3042", "P3042S1", "P3043", "P6170", "P6160",
+
+  # -- Salud y discapacidad --
+  "P6090", "P6100",
+  "P1906S1", "P1906S3", "P1906S4",
+  "P1906S5", "P1906S6", "P1906S7", "P1906S8",
+
+  # -- Hogar y vivienda --
+  "P6008", "P5090", "P4000", "P4010", "P4020",
+  "P4030S1", "P4030S1A1",
+  "P4030S2", "P4030S3", "P4030S4", "P4030S5",   # NBI: gas, alcantarillado, basuras, acueducto
+  "P5000", "P5010", "P5020", "P5050", "P5080",
+
+  # -- Inclusion financiera del hogar (multi-respuesta P5222*) --
+  "P5222S1",                   # Cuenta corriente
+  "P5222S2",                   # Cuenta de ahorros
+  "P5222S7",                   # Tarjeta de credito
+  "P5222S11",                  # Plataforma movil (nuevo 2025: Nequi, Daviplata, etc.)
+  "P5222S9",                   # Ningun producto financiero
+
+  # -- Fuerza de trabajo (aplica a toda la PET) --
+  "P6240",                     # Actividad principal semana pasada
+  "P6280",                     # Hizo diligencias para buscar trabajo
+  "P6310",                     # Razon por la que no busco aunque desea trabajar
+  "P6320",                     # Trabajo al menos 2 semanas en ultimos 12 meses
+  "P6340",                     # Busco trabajo en ultimos 12 meses
+  "P6351",                     # Disponibilidad la semana pasada
+
+  # -- Trabajo (solo aplica a ocupados) --
+  "P6430",                     # Posicion ocupacional (formal/informal)
+
+  # -- No ocupados (solo desocupados / inactivos) --
+  "DSI", "DSCY",               # Indicador desocupado sin / con experiencia
+  "P7250",                     # Semanas buscando trabajo (duracion del desempleo)
+  "P7430",                     # Ha trabajado alguna vez
+  "P7440S1",                   # Meses desde el ultimo trabajo
+  "P7450",                     # Razon por la que dejo el ultimo trabajo
+  "P7350",                     # Posicion ocupacional en el ultimo trabajo
+  "P744",                      # Disponibilidad la semana pasada (no ocupados)
+  "P9460",                     # Recibe subsidio de desempleo
+
+  # -- Vulnerabilidad / transferencias (otros ingresos) --
+  "P7510S2",                   # Recibe remesas del exterior
+  "P1661S1",                   # Familias en Accion
+  "P1661S2",                   # Jovenes en Accion
+  "P1661S3",                   # Colombia Mayor
+
+  # -- Migracion --
+  "P3373", "P3376", "P3383", "P3385",
+  "P3386",                     # Motivo del cambio de residencia (12 meses)
+
+  # -- Variables objetivo --
+  "desempleado", "estado_laboral"
+)
+
+# `intersect` se queda con las que existen; `setdiff` revela las ausentes.
+vars_disponibles <- intersect(vars_modelo, names(df_pet))
+vars_ausentes    <- setdiff(vars_modelo, names(df_pet))
+
+if (length(vars_ausentes) > 0) {
+  cat("Atencion: Variables solicitadas pero no encontradas:\n")
+  print(vars_ausentes)
+}
+
+df_modelo <- df_pet %>% dplyr::select(all_of(vars_disponibles))
+
+cat("\nDimensiones del dataset de modelado:\n")
+cat("  Filas    :", format(nrow(df_modelo), big.mark = ","), "\n")
+cat("  Columnas :", ncol(df_modelo), "\n")
+
+# -- Liberar memoria: df_pet ya no se usa ---------------------
+rm(df_pet)
+gc()
+}
+```  
+
+------------------------------------------------------------------------
