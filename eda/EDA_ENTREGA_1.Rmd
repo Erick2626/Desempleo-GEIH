@@ -1289,3 +1289,321 @@ gc()
 ```  
 
 ------------------------------------------------------------------------
+
+## Paso 4 — Diagnóstico de faltantes en el subset
+
+Tras filtrar a PET, construir la variable objetivo y seleccionar las
+variables relevantes, repetimos el conteo de faltantes sobre el subset
+reducido. Esto nos permite confirmar que la estrategia selectiva
+funcionó y decidir el tratamiento específico que recibirá cada columna
+restante.
+
+```{r falt-subset}
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+} else {
+  # % de faltantes sobre el subset reducido (clasifica el tratamiento).
+  falt_subset <- tibble(
+    columna  = names(df_modelo),
+    pct_falt = round(sapply(df_modelo, pct_faltante), 2)
+  ) %>%
+    arrange(desc(pct_falt))
+
+  print(falt_subset, n = Inf)
+}
+```
+
+------------------------------------------------------------------------
+
+## Paso 5 — Tratamiento de faltantes según porcentaje
+
+El diagnóstico del subset detecta variables con faltantes que provienen
+de dos fuentes distintas: **NA por diseño del cuestionario** (variables
+que solo se preguntan a un subgrupo, como `P5222*`, `P6071`, `P7250`,
+`P7430`, `P1661S*`, etc.) y **NA por no-respuesta real**.
+
+El grueso lo resolvemos en el **pre-tratamiento** del paso anterior (NA
+estructural → `0` para binarias o `99` para categóricas). Las variables
+restantes — con NA por no-respuesta real — entran al pipeline siguiente,
+donde aplicamos dos estrategias diferenciadas según el porcentaje y la
+naturaleza de cada variable:
+
+- **\< 10 % faltantes** → imputación simple (mediana para numéricas,
+  moda para categóricas).
+- **10 – 50 % faltantes** → recodificación como categoría `"No informa"`
+  (preserva la no-respuesta como información útil).
+- **Variables sensibles de identidad o nivel socioeconómico** → siempre
+  recodificación, aunque tengan pocos faltantes.
+
+### Criterio adicional: variables sensibles
+
+Tres variables del subset, aunque tengan menos del 10 % de faltantes, no
+se imputan porque hacerlo introduciría un sesgo metodológico:
+
+| Variable | \% NA | Razón por la que NO se imputa |
+|------------------------|------------------------|------------------------|
+| `P3038` | 6.23 | **Orientación sexual**. La moda es "heterosexual" (\>95 %). Imputar con moda eliminaría a las minorías LGBTI, justo el grupo cuya vulnerabilidad nos interesa. |
+| `P3039` | 6.23 | **Identidad de género**. Mismo problema: imputar con la moda ("cisgénero") borra a las personas trans. |
+| `P4030S1A1` | 3.54 | **Estrato socioeconómico**. Variable ordinal con peso económico claro; asignar la moda (estrato 2) inventa nivel socioeconómico al 3.5 % sin información. |
+
+### Variables a imputar
+
+Todas las variables con \< 10 % de faltantes (que no estén marcadas como
+sensibles) reciben imputación simple. Las representativas son atributos
+del hogar o información objetiva del entorno:
+
+| Variable | \% NA | Tipo | Método | Justificación |
+|---------------|---------------|---------------|---------------|---------------|
+| `P6100` | 3.95 | Categórica | Moda | Régimen de salud — distribución bien repartida. |
+| `P5080` | 3.76 | Categórica | Moda | Combustible para cocinar — atributo del hogar. |
+| `P3376` | 3.31 | Binaria | Moda | ¿Vivió en exterior? — la inmensa mayoría responde "No". |
+| `P6008` | 3.00 | Numérica | Mediana | Personas en el hogar — mediana estable (\~3). |
+| `P5090` | 3.00 | Categórica | Moda | Tenencia de vivienda. |
+| `P4010` | 3.00 | Categórica | Moda | Material de paredes. |
+| `P4020` | 3.00 | Categórica | Moda | Material de pisos. |
+| `P4030S1` | 3.00 | Binaria | Moda | Energía eléctrica — \>98 % la tiene. |
+| `P4030S2` | \~3 | Binaria | Moda | Gas natural — parte del score NBI. |
+| `P4030S3` | \~3 | Binaria | Moda | Alcantarillado — parte del score NBI. |
+| `P4030S4` | \~3 | Binaria | Moda | Recolección de basuras — parte del score NBI. |
+| `P4030S5` | \~3 | Binaria | Moda | Acueducto — parte del score NBI. |
+| `P5000` | 3.00 | Numérica | Mediana | Cuartos disponibles. |
+| `P5010` | 3.00 | Numérica | Mediana | Cuartos para dormir — usado para calcular hacinamiento. |
+| `P5020` | 3.00 | Categórica | Moda | Servicio sanitario. |
+| `P5050` | 3.00 | Categórica | Moda | Fuente de agua. |
+| `P3383` | 1.84 | Categórica | Moda | Zona urbana/rural hace 5 años. |
+| `P3385` | 0.35 | Categórica | Moda | Zona urbana/rural hace 12 meses. |
+
+**Criterios comunes que justifican imputar estas variables:**
+
+1.  **Faltantes bajos (\<10 %)** → efecto marginal sobre la
+    distribución.
+2.  **No son variables de identidad personal** → sin riesgo de borrar
+    minorías vulnerables.
+3.  **Atributos del hogar u objetivos del entorno** → la no-respuesta
+    suele ser administrativa, no un sesgo sistemático.
+
+### Variables a recodificar
+
+Las variables con faltantes altos (10–50 %) y las marcadas como
+sensibles reciben `"No informa"` (categóricas) o `99` (numéricas,
+convención DANE) para preservar la no-respuesta como categoría
+informativa:
+
+| Variable | \% NA | Motivo de recodificación |
+|------------------------|------------------------|------------------------|
+| `P6430` | 45.80 | Faltantes altos: posición ocupacional, solo aplica a ocupados. |
+| `P3043` | 36.93 | Faltantes altos: solo aplica a quienes obtuvieron título educativo. |
+| `P4000` | 34.10 | Faltantes altos: tipo de vivienda no siempre se captura. |
+| `P2059` | 31.90 | Faltantes altos: autorreconocimiento campesino pasado, pregunta condicionada. |
+| `P3038` | 6.23 | **Sensible**: imputar borraría minorías LGBTI. |
+| `P3039` | 6.23 | **Sensible**: imputar borraría personas trans. |
+| `P4030S1A1` | 3.54 | **Sensible**: estrato ordinal con peso económico. |
+
+### Justificación general del enfoque
+
+La imputación por **mediana** (numéricas) y **moda** (categóricas) es la
+estrategia más conservadora y reproducible cuando los faltantes son
+pocos. No introduce supuestos fuertes (a diferencia de KNN o regresión
+múltiple) y mantiene la base operable para los modelos.
+
+Las variables con faltantes altos o de identidad personal se
+**recodifican** porque el hecho mismo de no responder puede ser un
+predictor relevante del desempleo (por ejemplo, no informar la tenencia
+de cuenta de ahorros puede correlacionar con informalidad laboral).
+
+### Pre-tratamiento: variables con NA estructural
+
+Buena parte de las variables tienen NA por **diseño del cuestionario**:
+solo se pregunta a un subgrupo (ocupados, desocupados, quienes tienen
+pareja, etc.). Para estas, el `NA` significa "no aplica", no "no
+respondió". Las tratamos manualmente antes del pipeline general,
+distinguiendo dos casos:
+
+- **Binarias / multi-respuesta** (1 = Sí; el resto = "no aplica" o
+  "no"): `NA` → `0`. Incluye productos financieros (`P5222S*`), cónyuge
+  en hogar (`P6071`), indicadores de fuerza de trabajo (`DSI`, `DSCY`),
+  búsqueda de empleo (`P6280`, `P6320`, `P6340`, `P6351`, `P744`),
+  historial laboral (`P7430`), subsidio de desempleo (`P9460`), remesas
+  y transferencias (`P7510S2`, `P1661S1-S3`) y contadores como semanas
+  buscando (`P7250`) o meses desde el último empleo (`P7440S1`).
+- **Categóricas con códigos múltiples** (actividad principal, razón de
+  no búsqueda, razón de salida, posición ocupacional anterior, motivo de
+  migración): `NA` → `99` (convención DANE para "No aplica / No
+  informa"). Después se recodifican a categorías legibles en el paso
+  siguiente.
+
+```{r pre-tratar-multi}
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+} else {
+
+# Binarias / multi-respuesta: NA = no aplica = 0, valores != 1 = 0, 1 = 1
+vars_na_cero <- c(
+  # Productos financieros (multi-respuesta P5222*)
+  "P5222S1", "P5222S2", "P5222S7", "P5222S11", "P5222S9",
+  # Composicion familiar
+  "P6071",
+  # Indicadores de fuerza de trabajo (solo desocupados)
+  "DSI", "DSCY",
+  # Busqueda de empleo (binarias)
+  "P6280", "P6320", "P6340", "P6351", "P744",
+  # Historial laboral y subsidio
+  "P7430", "P9460",
+  # Vulnerabilidad / transferencias
+  "P7510S2", "P1661S1", "P1661S2", "P1661S3"
+)
+
+df_modelo <- df_modelo %>%
+  mutate(across(
+    all_of(intersect(vars_na_cero, names(df_modelo))),
+    ~ ifelse(is.na(.x) | .x != 1, 0L, 1L)
+  ))
+
+# CONTADORES: NA = no aplica = 0, pero PRESERVAR el valor original.
+# IMPORTANTE: estas son variables continuas (número de semanas, meses).
+# NO deben tratarse como binarias 0/1 — el valor real importa.
+vars_contadores <- c(
+  "P7250",    # Semanas buscando trabajo (continuo, hasta ~52)
+  "P7440S1"   # Meses desde el ultimo trabajo (continuo)
+)
+
+df_modelo <- df_modelo %>%
+  mutate(across(
+    all_of(intersect(vars_contadores, names(df_modelo))),
+    ~ ifelse(is.na(.x), 0L, as.integer(.x))
+  ))
+
+# Categoricas estructurales: NA = no aplica = 99 (DANE)
+vars_na_99 <- c(
+  "P6240",          # Actividad principal semana pasada
+  "P6310",          # Razon por la que no busco
+  "P7450", "P7350", # Razon / posicion en ultimo trabajo
+  "P3386"           # Motivo del cambio de residencia
+)
+
+df_modelo <- df_modelo %>%
+  mutate(across(
+    all_of(intersect(vars_na_99, names(df_modelo))),
+    ~ ifelse(is.na(.x), 99L, as.integer(.x))
+  ))
+
+# Verificacion rapida
+cat("Pre-tratamiento aplicado a", length(vars_na_cero) + length(vars_na_99),
+    "variables.\n")
+cat("Resumen de las binarias (% con valor 1):\n")
+df_modelo %>%
+  summarise(across(all_of(intersect(vars_na_cero, names(df_modelo))),
+                   ~ round(mean(.x == 1) * 100, 2))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "pct_si") %>%
+  arrange(desc(pct_si)) %>%
+  print(n = Inf)
+}
+```
+
+### Identificación de columnas para los dos tratamientos
+
+```{r decidir-tratamiento}
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+} else {
+
+# MODA: 
+moda <- function(x) {
+  x <- x[!is.na(x) & x != ""]
+  if (length(x) == 0) return(NA)
+  names(sort(table(x), decreasing = TRUE))[1]
+}
+
+# Columnas protegidas (no se tocan)
+no_imputar <- c(
+  "desempleado", "estado_laboral",
+  "PERIODO", "ANIO", "MES_NUM", "FEX_C18", "DPTO",
+  "DIRECTORIO", "SECUENCIA_P", "ORDEN", "HOGAR",
+  # Variables con NA estructural ya resueltas en el pre-tratamiento.
+  # Se excluyen aqui para evitar que el pipeline general las procese
+  # de nuevo (no afectaria los datos, pero ensucia los conteos).
+  "P5222S1", "P5222S2", "P5222S7", "P5222S9", "P5222S11",
+  "P6071",
+  "DSI", "DSCY", "P6280", "P6320", "P6340", "P6351", "P744",
+  "P7430", "P9460", "P7250", "P7440S1",
+  "P7510S2", "P1661S1", "P1661S2", "P1661S3",
+  "P6240", "P6310", "P7450", "P7350", "P3386"
+)
+
+# Variables sensibles que NUNCA imputamos con moda
+# aunque tengan <10% de faltantes (sesgaria el analisis)
+vars_sensibles <- c(
+  "P3038",     # Orientacion sexual: imputar borraria minorias LGBTI
+  "P3039",     # Identidad de genero: imputar borraria personas trans
+  "P4030S1A1"  # Estrato: ordinal economico.
+)
+
+# Dos listas:
+#   - cols_imputar: <10% NA -> moda/mediana.
+#   - cols_recodificar: 10-50% NA o sensibles.
+cols_imputar <- falt_subset %>%
+  filter(pct_falt > 0 & pct_falt < 10,
+         !columna %in% no_imputar,
+         !columna %in% vars_sensibles) %>%
+  pull(columna)
+
+cols_recodificar <- falt_subset %>%
+  filter((pct_falt >= 10 & pct_falt <= 50) | columna %in% vars_sensibles,
+         !columna %in% no_imputar) %>%
+  pull(columna)
+
+# Reporte resumen
+cat("Columnas a imputar       :", length(cols_imputar), "\n")
+cat("Columnas a recodificar   :", length(cols_recodificar), "\n\n")
+
+# Tabla con el detalle
+detalle_tratamiento <- falt_subset %>%
+  filter(columna %in% c(cols_imputar, cols_recodificar)) %>%
+  mutate(
+    tratamiento = case_when(
+      columna %in% cols_imputar     ~ "Imputar (mediana/moda)",
+      columna %in% cols_recodificar ~ "Recodificar (No informa)"
+    ),
+    nota = case_when(
+      columna %in% vars_sensibles ~ "Sensible: preservar no-respuesta",
+      pct_falt > 10               ~ "Faltantes altos",
+      TRUE                        ~ ""
+    )
+  ) %>%
+  arrange(tratamiento, desc(pct_falt))
+
+print(detalle_tratamiento, n = Inf)
+}
+```
+
+### Aplicación de la imputación
+
+Una vez identificadas las columnas, ejecutamos las dos operaciones:
+
+```{r aplicar-imputar}
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+} else {
+  # Numericas -> MEDIANA (robusta a outliers). Categoricas -> MODA.
+  for (col in cols_imputar) {
+    x <- df_modelo[[col]]
+    if (is.numeric(x)) {
+      x[is.na(x)] <- median(x, na.rm = TRUE)
+    } else {
+      x[is.na(x) | x == "" | x == "."] <- moda(x)
+    }
+    df_modelo[[col]] <- x
+  }
+
+  # Recodificacion: marcamos la no-respuesta con 99 (DANE) o "No informa".
+  for (col in cols_recodificar) {
+    x <- df_modelo[[col]]
+    if (is.numeric(x)) {
+      x[is.na(x)] <- 99
+    } else {
+      x[is.na(x) | x == "" | x == "."] <- "No informa"
+    }
+    df_modelo[[col]] <- x
+  }
+}
+```
