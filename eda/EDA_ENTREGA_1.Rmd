@@ -997,3 +997,54 @@ summary(hogares_size$personas_en_hogar)
 > está lista para el análisis de faltantes.
 
 ------------------------------------------------------------------------
+
+## Análisis de valores faltantes
+
+La GEIH usa distintos tokens para representar "ausencia de dato": `NA`
+real, cadena vacía `""`, punto `"."`, y la cadena `"NA"`. Los unificamos
+antes de calcular porcentajes.
+
+```{r falt-funcion, eval=TRUE}
+# Tokens DANE de ausencia (texto). El NA real de R se suma aparte.
+tokens_falt <- c("", ".", "NA", "N/A")
+
+# % de faltantes: texto cuenta NA + tokens; numerico solo NA.
+pct_faltante <- function(x) {
+  if (is.character(x)) {
+    mean(is.na(x) | x %in% tokens_falt) * 100
+  } else {
+    mean(is.na(x)) * 100
+  }
+}
+```
+
+```{r falt-tabla, eval=TRUE}
+# `sapply` aplica pct_faltante a cada columna de df_geih.
+resumen_falt <- tibble(
+  columna  = names(df_geih),
+  pct_falt = round(sapply(df_geih, pct_faltante), 2)
+) %>%
+  arrange(desc(pct_falt))
+
+# Cuantas variables caen en cada banda de faltantes.
+cat("Total variables             :", nrow(resumen_falt), "\n")
+cat("Variables sin faltantes     :", sum(resumen_falt$pct_falt == 0), "\n")
+cat("Variables con <5% faltantes :", sum(resumen_falt$pct_falt < 5), "\n")
+cat("Variables con >50% faltantes:", sum(resumen_falt$pct_falt > 50), "\n")
+cat("Variables 100% vacias       :", sum(resumen_falt$pct_falt == 100), "\n")
+cat("Promedio de faltantes (%)   :", round(mean(resumen_falt$pct_falt), 2), "\n")
+cat("Mediana de faltantes (%)    :", round(median(resumen_falt$pct_falt), 2), "\n")
+```
+
+> Como la mayoría de los faltantes corresponden a "no aplica" por la
+> estructura de la encuesta (preguntas filtro), no podemos imputar todo
+> masivamente. Aplicamos una **estrategia selectiva para reducir
+> faltantes** en cuatro pasos:
+>
+> 1.  Filtramos al universo relevante (personas en edad de trabajar).
+> 2.  Construimos la variable objetivo (`desempleado`).
+> 3.  Seleccionamos un subconjunto de variables con respaldo teórico.
+> 4.  Tratamos los faltantes restantes según su porcentaje:
+>     - **\<10 %** → imputación simple (mediana / moda).
+>     - **10–50 %** → recodificación como categoría "No informa".
+>     - **\>50 %** → eliminación o tratamiento especial.
