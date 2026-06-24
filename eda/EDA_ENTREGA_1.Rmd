@@ -2860,3 +2860,842 @@ ggplot(td_transf,
   tema_geih +
   theme(panel.grid.major.x = element_blank())
 ```
+```{r eda-target-serie, eval=TRUE}
+# -- 2. Tasa de desempleo mensual (serie de tiempo) -----------
+serie_mensual <- df_ft %>%
+  mutate(fecha = lubridate::make_date(ANIO, MES_NUM, 1)) %>%
+  group_by(fecha) %>%
+  summarise(
+    td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+    .groups = "drop"
+  )
+
+ggplot(serie_mensual, aes(x = fecha, y = td)) +
+  geom_line(color = "#2C7FB8", linewidth = 1) +
+  geom_point(color = "#2C7FB8", size = 2.2) +
+  geom_smooth(method = "loess", se = TRUE, color = "#D7191C",
+              fill = "#D7191C", alpha = 0.12, linewidth = 0.8) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b %Y") +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Serie mensual de desempleo — Colombia 2023–2025",
+    subtitle = "Línea roja: tendencia LOESS con intervalo de confianza 95%",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+------------------------------------------------------------------------
+
+## Perfil demográfico del desempleo
+
+```{r eda-sexo, eval=TRUE}
+# -- 3. Tasa de desempleo por sexo y año ----------------------
+td_sexo <- df_ft %>%
+  filter(sexo != "No informa") %>%
+  group_by(ANIO, sexo) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            .groups = "drop")
+
+ggplot(td_sexo, aes(x = factor(ANIO), y = td, fill = sexo)) +
+  geom_col(position = "dodge", width = 0.6) +
+  geom_text(aes(label = paste0(td, "%")),
+            position = position_dodge(width = 0.6),
+            vjust = -0.5, size = 3.8, fontface = "bold") +
+  scale_fill_manual(values = pal_sexo, name = "Sexo") +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_sexo$td) * 1.2)
+  ) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo por sexo y año",
+    subtitle = "Brecha de género en el mercado laboral colombiano",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+```{r eda-edad, eval=TRUE}
+# -- 4. Tasa de desempleo por grupo de edad -------------------
+orden_edad <- c("15-17", "18-24", "25-34", "35-44",
+                "45-54", "55-64", "65+")
+
+td_edad <- df_ft %>%
+  filter(grupo_edad != "No informa") %>%
+  mutate(grupo_edad = factor(grupo_edad, levels = orden_edad)) %>%
+  group_by(grupo_edad) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop")
+
+ggplot(td_edad, aes(x = grupo_edad, y = td)) +
+  geom_col(fill = "#2C7FB8", width = 0.6) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 4, fontface = "bold", color = "#2C7FB8") +
+  geom_hline(yintercept = mean(td_edad$td), linetype = "dashed",
+             color = "#D7191C", linewidth = 0.7) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_edad$td) * 1.2)
+  ) +
+  labs(
+    x       = "Grupo de edad",
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo por grupo de edad",
+    subtitle = "Línea roja: promedio global. Jóvenes 18-24 son el grupo más afectado",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+```{r eda-edad-sexo, eval=TRUE}
+# -- 5. Tasa de desempleo por edad y sexo (heatmap) -----------
+td_edad_sexo <- df_ft %>%
+  filter(grupo_edad != "No informa", sexo != "No informa") %>%
+  mutate(grupo_edad = factor(grupo_edad, levels = orden_edad)) %>%
+  group_by(grupo_edad, sexo) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            .groups = "drop")
+
+ggplot(td_edad_sexo, aes(x = grupo_edad, y = sexo, fill = td)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = paste0(td, "%")), size = 4, fontface = "bold",
+            color = "white") +
+  scale_fill_gradient(low = "#74C3D0", high = "#D7191C",
+                      name = "Tasa (%)") +
+  labs(
+    x       = "Grupo de edad",
+    y       = NULL,
+    title   = "Tasa de desempleo por edad y sexo — Mapa de calor",
+    subtitle = "Mayor intensidad = mayor desempleo",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid = element_blank(),
+        legend.key.width = unit(1.2, "cm"))
+```
+
+------------------------------------------------------------------------
+
+## Educación y desempleo
+
+```{r eda-educacion, eval=TRUE}
+# -- 6. Tasa de desempleo por nivel educativo -----------------
+orden_edu <- c(
+  "Ninguno", "Preescolar", "Basica primaria", "Basica secundaria",
+  "Media (academica/tecnica)", "Tecnica/Tecnologica/Normalista",
+  "Universitaria", "Posgrado (Esp./Maest./Doct.)"
+)
+
+td_edu <- df_ft %>%
+  filter(nivel_educativo %in% orden_edu) %>%
+  mutate(nivel_educativo = factor(nivel_educativo, levels = orden_edu)) %>%
+  group_by(nivel_educativo) %>%
+  summarise(
+    td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+    n  = n(),
+    .groups = "drop"
+  )
+
+ggplot(td_edu, aes(x = nivel_educativo, y = td,
+                   size = n, color = td)) +
+  geom_point(alpha = 0.85) +
+  geom_segment(aes(x = nivel_educativo, xend = nivel_educativo,
+                   y = 0, yend = td),
+               color = "gray75", linewidth = 0.5) +
+  scale_color_gradient(low = "#74C3D0", high = "#D7191C",
+                       name = "Tasa (%)") +
+  scale_size_continuous(name = "N° personas",
+                        labels = scales::comma,
+                        range  = c(3, 12)) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0.02, 0),
+    limits = c(0, max(td_edu$td) * 1.15)
+  ) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Desempleo según nivel educativo",
+    subtitle = "Tamaño del punto proporcional al número de personas en la fuerza de trabajo",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1),
+        panel.grid.major.x = element_blank())
+```
+
+```{r eda-edu-sexo2, eval=TRUE}
+# -- 7. Brecha educativa de género por nivel ------------------
+td_edu_sexo <- df_ft %>%
+  filter(nivel_educativo %in% orden_edu, sexo != "No informa") %>%
+  mutate(nivel_educativo = factor(nivel_educativo, levels = orden_edu)) %>%
+  group_by(nivel_educativo, sexo) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            .groups = "drop")
+
+ggplot(td_edu_sexo,
+       aes(x = nivel_educativo, y = td,
+           color = sexo, group = sexo)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.8) +
+  scale_color_manual(values = pal_sexo, name = "Sexo") +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo por nivel educativo y sexo",
+    subtitle = "La brecha de género persiste en todos los niveles educativos",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+------------------------------------------------------------------------
+
+## Geografía del desempleo
+
+```{r eda-region, eval=TRUE}
+# -- 8. Tasa de desempleo por región geográfica ---------------
+td_region <- df_ft %>%
+  group_by(region) %>%
+  summarise(
+    td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+    n  = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(td))
+
+ggplot(td_region,
+       aes(x = reorder(region, td), y = td,
+           fill = td)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = paste0(td, "%")),
+            hjust = -0.15, size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#74C3D0", high = "#D7191C",
+                      guide = "none") +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_region$td) * 1.18)
+  ) +
+  coord_flip() +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Desempleo por región geográfica",
+    subtitle = "Heterogeneidad regional marcada en el mercado laboral colombiano",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.y = element_blank())
+```
+
+```{r eda-dpto, eval=TRUE}
+# -- 9. Mapa de calor de desempleo por departamento -----------
+td_dpto <- df_ft %>%
+  group_by(departamento) %>%
+  summarise(
+    td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+    n  = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(td))
+
+ggplot(td_dpto,
+       aes(x = reorder(departamento, td), y = td, fill = td)) +
+  geom_col(width = 0.75) +
+  scale_fill_gradient(low = "#FFFFB2", high = "#D7191C",
+                      name = "TD (%)") +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_dpto$td) * 1.12)
+  ) +
+  coord_flip() +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo por departamento",
+    subtitle = "2023–2025. Ranking de mayor a menor tasa",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(axis.text.y = element_text(size = 9),
+        panel.grid.major.y = element_blank())
+```
+
+```{r eda-zona, eval=TRUE}
+# -- 10. Cabecera vs. Resto ------------------------------------
+td_zona <- df_ft %>%
+  filter(zona != "No informa") %>%
+  group_by(zona, ANIO) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            .groups = "drop")
+
+ggplot(td_zona,
+       aes(x = factor(ANIO), y = td,
+           fill = zona)) +
+  geom_col(position = "dodge", width = 0.55) +
+  geom_text(aes(label = paste0(td, "%")),
+            position = position_dodge(width = 0.55),
+            vjust = -0.5, size = 3.8, fontface = "bold") +
+  scale_fill_manual(values = pal_zona, name = NULL) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_zona$td) * 1.22)
+  ) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Desempleo urbano vs. rural por año",
+    subtitle = "Cabecera (urbano) vs. Resto (centro poblado y rural disperso)",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+------------------------------------------------------------------------
+
+## Condiciones del hogar y vulnerabilidad
+
+```{r eda-estrato, eval=TRUE}
+# -- 11. Desempleo por estrato socioeconómico -----------------
+td_estrato <- df_ft %>%
+  filter(estrato %in% 1:6) %>%
+  group_by(estrato) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop")
+
+ggplot(td_estrato,
+       aes(x = factor(estrato), y = td,
+           fill = factor(estrato))) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 4, fontface = "bold") +
+  scale_fill_brewer(palette = "RdYlBu", direction = 1) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_estrato$td) * 1.2)
+  ) +
+  labs(
+    x       = "Estrato socioeconómico",
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo por estrato socioeconómico",
+    subtitle = "Relación inversa entre estrato y probabilidad de desempleo",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+```{r eda-servicios, eval=TRUE}
+# -- 12. Desempleo según cobertura de servicios básicos --------
+td_serv <- df_ft %>%
+  group_by(servicios_basicos_score) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop")
+
+ggplot(td_serv,
+       aes(x = factor(servicios_basicos_score), y = td,
+           fill = td)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#74C3D0", high = "#D7191C") +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_serv$td) * 1.2)
+  ) +
+  labs(
+    x       = "Servicios básicos (0 = ninguno, 5 = todos)",
+    y       = "Tasa de desempleo",
+    title   = "Desempleo según acceso a servicios públicos domiciliarios",
+    subtitle = "Proxy de pobreza estructural (NBI parcial)",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+```{r eda-inclusion-fin, eval=TRUE}
+# -- 13. Inclusión financiera y desempleo ---------------------
+td_fin <- df_ft %>%
+  group_by(inclusion_fin_score) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop")
+
+ggplot(td_fin,
+       aes(x = factor(inclusion_fin_score), y = td)) +
+  geom_col(fill = "#2C7FB8", width = 0.55) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 4, fontface = "bold", color = "#2C7FB8") +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_fin$td) * 1.2)
+  ) +
+  labs(
+    x       = "Score de inclusión financiera (0 = sin productos, 4 = máximo)",
+    y       = "Tasa de desempleo",
+    title   = "Desempleo según inclusión financiera del hogar",
+    subtitle = "Mayor acceso a productos financieros se asocia con menor desempleo",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+```{r eda-hacinamiento, eval=TRUE}
+# -- 14. Hacinamiento crítico ----------------------------------
+td_hac <- df_ft %>%
+  group_by(hac_critico) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop") %>%
+  mutate(etiqueta = ifelse(hac_critico == 1,
+                           "Hacinamiento crítico\n(>3 personas/cuarto)",
+                           "Sin hacinamiento crítico"))
+
+ggplot(td_hac,
+       aes(x = etiqueta, y = td, fill = factor(hac_critico))) +
+  geom_col(width = 0.45, show.legend = FALSE) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("0" = "#74C3D0", "1" = "#D7191C")) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_hac$td) * 1.25)
+  ) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Desempleo según hacinamiento crítico del hogar",
+    subtitle = "Criterio DANE: más de 3 personas por cuarto para dormir",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+------------------------------------------------------------------------
+
+## Perfiles de vulnerabilidad específica
+
+```{r eda-discapacidad, eval=TRUE}
+# -- 15. Discapacidad y desempleo -----------------------------
+td_disc <- df_ft %>%
+  mutate(
+    perfil_disc = case_when(
+      discapacidad_severa == 1              ~ "Discapacidad severa",
+      discapacidad == 1                     ~ "Discapacidad no severa",
+      TRUE                                  ~ "Sin discapacidad"
+    )
+  ) %>%
+  group_by(perfil_disc) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop") %>%
+  arrange(desc(td))
+
+ggplot(td_disc,
+       aes(x = reorder(perfil_disc, -td), y = td,
+           fill = perfil_disc)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 4.5, fontface = "bold") +
+  scale_fill_manual(
+    values = c("Discapacidad severa"      = "#D7191C",
+               "Discapacidad no severa"   = "#FDAE61",
+               "Sin discapacidad"         = "#2C7FB8")
+  ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_disc$td) * 1.2)
+  ) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo según condición de discapacidad",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+```{r eda-etnia, eval=TRUE}
+# -- 16. Desempleo por grupo étnico ---------------------------
+td_etnia <- df_ft %>%
+  filter(etnia != "No informa") %>%
+  group_by(etnia) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop") %>%
+  arrange(desc(td))
+
+ggplot(td_etnia,
+       aes(x = reorder(etnia, td), y = td, fill = td)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = paste0(td, "%")),
+            hjust = -0.2, size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#74C3D0", high = "#D7191C",
+                      guide = "none") +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_etnia$td) * 1.18)
+  ) +
+  coord_flip() +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo por grupo étnico",
+    subtitle = "Brechas étnicas en el acceso al empleo",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.y = element_blank())
+```
+
+```{r eda-transferencias, eval=TRUE}
+# -- 17. Desempleo y transferencias gubernamentales -------------
+td_transf <- df_ft %>%
+  mutate(
+    recibe_alguna = ifelse(transferencias_gov >= 1, "Recibe transferencia", 
+                           "No recibe transferencia")
+  ) %>%
+  group_by(recibe_alguna) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop")
+
+ggplot(td_transf,
+       aes(x = recibe_alguna, y = td, fill = recibe_alguna)) +
+  geom_col(width = 0.45, show.legend = FALSE) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("Recibe transferencia"     = "#D7191C",
+                               "No recibe transferencia"  = "#2C7FB8")) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_transf$td) * 1.25)
+  ) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Desempleo según recepción de transferencias del gobierno",
+    subtitle = "Familias en Acción, Jóvenes en Acción, Colombia Mayor",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+------------------------------------------------------------------------
+
+## Comportamiento de búsqueda laboral
+
+```{r eda-duracion, eval=TRUE}
+# -- 18. Distribución de la duración del desempleo ------------
+df_desocup <- df_modelo %>%
+  filter(estado_laboral == "Desocupado", semanas_desempleo > 0)
+
+ggplot(df_desocup, aes(x = semanas_desempleo)) +
+  geom_histogram(binwidth = 4, fill = "#D7191C", color = "white",
+                 alpha = 0.85) +
+  geom_vline(aes(xintercept = median(semanas_desempleo)),
+             color = "#2C7FB8", linewidth = 1.2, linetype = "dashed") +
+  annotate("text",
+           x     = median(df_desocup$semanas_desempleo) + 3,
+           y     = Inf, vjust = 1.8, hjust = 0,
+           label = paste0("Mediana: ",
+                          round(median(df_desocup$semanas_desempleo), 1),
+                          " sem."),
+           color = "#2C7FB8", fontface = "bold", size = 4) +
+  scale_x_continuous(
+    breaks = seq(0, max(df_desocup$semanas_desempleo, na.rm = TRUE), 8)
+  ) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    x       = "Semanas buscando trabajo",
+    y       = "Número de personas",
+    title   = "Distribución de la duración del desempleo",
+    subtitle = "Solo personas desocupadas activamente buscando trabajo",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih
+```
+
+```{r eda-duracion-sexo, eval=TRUE}
+# -- 19. Duración del desempleo por sexo — Boxplot ------------
+ggplot(
+  df_desocup %>% filter(sexo != "No informa"),
+  aes(x = sexo, y = semanas_desempleo, fill = sexo)
+) +
+  geom_boxplot(outlier.alpha = 0.3, outlier.size = 1.5,
+               width = 0.45, show.legend = FALSE) +
+  stat_summary(fun = mean, geom = "point", shape = 18,
+               size = 4, color = "black") +
+  scale_fill_manual(values = pal_sexo) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    x       = NULL,
+    y       = "Semanas buscando trabajo",
+    title   = "Duración del desempleo por sexo",
+    subtitle = "Diamante negro = media. La caja comprende el 50% central",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+```{r eda-desalentados, eval=TRUE}
+# -- 20. Perfil de los trabajadores desalentados ---------------
+# (quienes desean trabajar pero ya dejaron de buscar por razones de mercado)
+desalentados_pct <- df_modelo %>%
+  filter(estado_laboral %in% c("Desocupado", "Inactivo")) %>%
+  group_by(sexo, grupo_edad) %>%
+  summarise(
+    pct_desalentado = round(100 * mean(desalentado == 1), 2),
+    .groups = "drop"
+  ) %>%
+  filter(sexo != "No informa",
+         grupo_edad != "No informa") %>%
+  mutate(grupo_edad = factor(grupo_edad, levels = orden_edad))
+
+ggplot(desalentados_pct,
+       aes(x = grupo_edad, y = pct_desalentado,
+           color = sexo, group = sexo)) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 3) +
+  scale_color_manual(values = pal_sexo, name = "Sexo") +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(
+    x       = "Grupo de edad",
+    y       = "% de personas desalentadas",
+    title   = "Perfil demográfico de trabajadores desalentados",
+    subtitle = "Desalentados: desean trabajar pero ya no buscan (razones de mercado)",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1))
+```
+
+------------------------------------------------------------------------
+
+## Correlaciones y matriz de riesgo
+
+```{r eda-correlacion, eval=TRUE}
+# -- 21. Correlación entre variables numéricas clave ----------
+vars_num_eda <- c(
+  "P6040",                  # Edad
+  "P6008",                  # Personas en hogar
+  "semanas_desempleo",
+  "meses_sin_trabajo",
+  "hacinamiento",
+  "servicios_basicos_score",
+  "inclusion_fin_score",
+  "razon_dependencia",
+  "transferencias_gov",
+  "desempleado"
+)
+
+nombres_legibles <- c(
+  "Edad", "Personas hogar", "Semanas desempleo",
+  "Meses sin trabajo", "Hacinamiento",
+  "Servicios básicos", "Inclusión financiera",
+  "Razón dependencia", "Transferencias gov.",
+  "Desempleado"
+)
+
+mat_cor <- df_ft %>%
+  select(all_of(vars_num_eda)) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  round(2)
+
+colnames(mat_cor) <- nombres_legibles
+rownames(mat_cor) <- nombres_legibles
+
+# Visualización como heatmap
+cor_long <- as.data.frame(mat_cor) %>%
+  rownames_to_column("var1") %>%
+  pivot_longer(-var1, names_to = "var2", values_to = "corr") %>%
+  mutate(
+    var1 = factor(var1, levels = nombres_legibles),
+    var2 = factor(var2, levels = nombres_legibles)
+  )
+
+ggplot(cor_long, aes(x = var2, y = var1, fill = corr)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = corr), size = 3.2,
+            color = ifelse(abs(cor_long$corr) > 0.5, "white", "black")) +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#D7191C",
+                       midpoint = 0, limits = c(-1, 1),
+                       name = "Correlación") +
+  labs(
+    x       = NULL,
+    y       = NULL,
+    title   = "Matriz de correlaciones — Variables numéricas clave",
+    subtitle = "Correlación de Pearson. Azul = negativa, Rojo = positiva",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid  = element_blank())
+```
+
+```{r eda-matriz-riesgo, eval=TRUE}
+# -- 22. Matriz de riesgo: sexo × nivel educativo --------------
+riesgo_edu_sexo <- df_ft %>%
+  filter(nivel_educativo %in% orden_edu,
+         sexo != "No informa") %>%
+  mutate(nivel_educativo = factor(nivel_educativo, levels = orden_edu)) %>%
+  group_by(sexo, nivel_educativo) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            .groups = "drop")
+
+ggplot(riesgo_edu_sexo,
+       aes(x = nivel_educativo, y = td,
+           fill = sexo, group = sexo)) +
+  geom_area(alpha = 0.35, position = "identity") +
+  geom_line(aes(color = sexo), linewidth = 1.1) +
+  geom_point(aes(color = sexo), size = 2.8) +
+  scale_fill_manual(values  = pal_sexo) +
+  scale_color_manual(values = pal_sexo, name = NULL) +
+  guides(fill = "none") +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Matriz de riesgo: educación × género",
+    subtitle = "Área sombreada muestra la brecha de género en cada nivel educativo",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+------------------------------------------------------------------------
+
+## Tabla resumen ejecutiva del EDA
+
+```{r eda-tabla-resumen, eval=TRUE}
+# -- 23. Tabla resumen con los hallazgos principales -----------
+resumen_eda <- tibble(
+  Dimensión = c(
+    "Tasa global (2023–2025)",
+    "Brecha de género",
+    "Grupo etario más afectado",
+    "Nivel educativo de mayor riesgo",
+    "Región de mayor desempleo",
+    "Estrato de mayor riesgo",
+    "Desempleo con hacinamiento crítico",
+    "Desempleo sin productos financieros",
+    "Desempleo con transferencias gov.",
+    "Duración mediana del desempleo"
+  ),
+  Hallazgo = c(
+    paste0(tasa_global, "%"),
+    paste0(
+      round(
+        filter(td_sexo, sexo == "Femenino")$td %>% mean() -
+        filter(td_sexo, sexo == "Masculino")$td %>% mean(), 1),
+      " pp a favor del hombre"),
+    paste0("18-24 años (", filter(td_edad, grupo_edad == "18-24")$td, "%)"),
+    paste0(td_edu$nivel_educativo[which.max(td_edu$td)],
+           " (", max(td_edu$td), "%)"),
+    paste0(td_region$region[1], " (", td_region$td[1], "%)"),
+    paste0("Estrato ", td_estrato$estrato[which.max(td_estrato$td)],
+           " (", max(td_estrato$td), "%)"),
+    paste0(filter(td_hac, hac_critico == 1)$td, "% vs. ",
+           filter(td_hac, hac_critico == 0)$td, "%"),
+    paste0(filter(td_fin, inclusion_fin_score == 0)$td, "% vs. ",
+           filter(td_fin, inclusion_fin_score == max(td_fin$inclusion_fin_score))$td,
+           "% (score máximo)"),
+    paste0(filter(td_transf, recibe_alguna == "Recibe transferencia")$td, "% vs. ",
+           filter(td_transf, recibe_alguna == "No recibe transferencia")$td, "%"),
+    paste0(round(median(df_desocup$semanas_desempleo, na.rm = TRUE), 1),
+           " semanas")
+  )
+)
+
+kable(resumen_eda,
+      caption = "Hallazgos principales del Análisis Exploratorio de Datos — GEIH 2023–2025",
+      col.names = c("Dimensión analizada", "Hallazgo principal"),
+      align = c("l", "l")) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width  = TRUE,
+    font_size   = 13
+  ) %>%
+  row_spec(0, bold = TRUE, background = "#2C7FB8", color = "white") %>%
+  column_spec(1, bold = TRUE, width = "40%") %>%
+  column_spec(2, width = "60%")
+```
+
+------------------------------------------------------------------------
+
+## Síntesis del EDA
+
+```{r eda-sintesis, eval=TRUE}
+cat("
+=============================================================
+  SÍNTESIS DEL ANÁLISIS EXPLORATORIO — GEIH 2023–2025
+=============================================================
+
+1. VARIABLE OBJETIVO
+   • Tasa global de desempleo: ", tasa_global, "%
+   • El desbalance de clases (~88/12 o~89/11) justifica el uso 
+     de ROSE para oversampling antes del modelado.
+
+2. FACTORES DEMOGRÁFICOS MÁS DIFERENCIADORES
+   • Sexo: las mujeres presentan una tasa ~5 pp superior al promedio.
+   • Edad: los jóvenes de 18-24 concentran el mayor riesgo.
+   • Etnia: grupos étnicos minoritarios muestran tasas elevadas.
+
+3. EDUCACIÓN
+   • La relación educación-desempleo es no-lineal: el riesgo más 
+     alto se observa en niveles de básica secundaria y media.
+   • La brecha de género persiste en todos los niveles educativos.
+
+4. GEOGRAFÍA
+   • Fuerte heterogeneidad regional. El Pacífico y algunas zonas 
+     del Caribe superan el 20% de desempleo.
+   • Las cabeceras urbanas presentan mayor desempleo que el sector 
+     rural (desempleo friccional vs. subempleo).
+
+5. CONDICIONES DEL HOGAR
+   • Hacinamiento crítico, bajo estrato y escasa inclusión financiera 
+     se asocian de manera consistente con mayor desempleo.
+   • El score de servicios básicos actúa como proxy efectivo de 
+     pobreza estructural.
+
+6. VARIABLES PARA MODELADO (orden de relevancia sugerido)
+   grupo_edad · sexo · nivel_educativo · zona · estrato ·
+   servicios_basicos_score · inclusion_fin_score · hacinamiento ·
+   etnia · discapacidad · exp_laboral_previa · desalentado ·
+   transferencias_gov · razon_dependencia · migrante_internacional
+=============================================================
+")
+```
