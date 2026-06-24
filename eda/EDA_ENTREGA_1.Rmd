@@ -2745,3 +2745,118 @@ ggplot(td_hac,
   tema_geih +
   theme(panel.grid.major.x = element_blank())
 ```
+
+------------------------------------------------------------------------
+
+## Perfiles de vulnerabilidad específica
+
+```{r eda-discapacidad, eval=TRUE}
+# -- 15. Discapacidad y desempleo -----------------------------
+td_disc <- df_ft %>%
+  mutate(
+    perfil_disc = case_when(
+      discapacidad_severa == 1              ~ "Discapacidad severa",
+      discapacidad == 1                     ~ "Discapacidad no severa",
+      TRUE                                  ~ "Sin discapacidad"
+    )
+  ) %>%
+  group_by(perfil_disc) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop") %>%
+  arrange(desc(td))
+
+ggplot(td_disc,
+       aes(x = reorder(perfil_disc, -td), y = td,
+           fill = perfil_disc)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 4.5, fontface = "bold") +
+  scale_fill_manual(
+    values = c("Discapacidad severa"      = "#D7191C",
+               "Discapacidad no severa"   = "#FDAE61",
+               "Sin discapacidad"         = "#2C7FB8")
+  ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_disc$td) * 1.2)
+  ) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo según condición de discapacidad",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
+
+```{r eda-etnia, eval=TRUE}
+# -- 16. Desempleo por grupo étnico ---------------------------
+td_etnia <- df_ft %>%
+  filter(etnia != "No informa") %>%
+  group_by(etnia) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop") %>%
+  arrange(desc(td))
+
+ggplot(td_etnia,
+       aes(x = reorder(etnia, td), y = td, fill = td)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = paste0(td, "%")),
+            hjust = -0.2, size = 4, fontface = "bold") +
+  scale_fill_gradient(low = "#74C3D0", high = "#D7191C",
+                      guide = "none") +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_etnia$td) * 1.18)
+  ) +
+  coord_flip() +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Tasa de desempleo por grupo étnico",
+    subtitle = "Brechas étnicas en el acceso al empleo",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.y = element_blank())
+```
+
+```{r eda-transferencias, eval=TRUE}
+# -- 17. Desempleo y transferencias gubernamentales -------------
+td_transf <- df_ft %>%
+  mutate(
+    recibe_alguna = ifelse(transferencias_gov >= 1, "Recibe transferencia", 
+                           "No recibe transferencia")
+  ) %>%
+  group_by(recibe_alguna) %>%
+  summarise(td = round(100 * mean(estado_laboral == "Desocupado"), 2),
+            n  = n(),
+            .groups = "drop")
+
+ggplot(td_transf,
+       aes(x = recibe_alguna, y = td, fill = recibe_alguna)) +
+  geom_col(width = 0.45, show.legend = FALSE) +
+  geom_text(aes(label = paste0(td, "%")),
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("Recibe transferencia"     = "#D7191C",
+                               "No recibe transferencia"  = "#2C7FB8")) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = c(0, 0),
+    limits = c(0, max(td_transf$td) * 1.25)
+  ) +
+  labs(
+    x       = NULL,
+    y       = "Tasa de desempleo",
+    title   = "Desempleo según recepción de transferencias del gobierno",
+    subtitle = "Familias en Acción, Jóvenes en Acción, Colombia Mayor",
+    caption  = "Fuente: GEIH — DANE"
+  ) +
+  tema_geih +
+  theme(panel.grid.major.x = element_blank())
+```
