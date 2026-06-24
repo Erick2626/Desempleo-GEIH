@@ -1607,3 +1607,604 @@ if (df_modelo_listo) {
   }
 }
 ```
+
+
+## Paso 6 — Recodificación y nuevas variables derivadas
+
+Con los faltantes resueltos, ahora **traducimos los códigos numéricos a
+categorías legibles** y construimos **nuevas variables derivadas** que
+serán útiles tanto para el EDA como para los modelos de clasificación.
+
+### Tipos de transformaciones
+
+| Tipo | Variables creadas | Para qué sirven |
+|------------------------|------------------------|------------------------|
+| **Categóricas legibles** | `sexo`, `grupo_edad`, `nivel_educativo`, `zona`, `tenencia`, `es_campesino`, `fue_campesino`, `comunidad_campesina`, `padres_presentes`, `tipo_trabajo`, `etnia`, `actividad_principal`, `posicion_ultimo_trabajo`, `razon_dejo_trabajo`, `razon_no_busqueda`, `motivo_migracion`, `departamento`, `region` | Facilitan la interpretación de gráficos y tablas (mejor leer "Femenino" que "2") |
+| **Indicadores binarios** | `discapacidad`, `discapacidad_severa`, `tiene_cta_corriente`, `bancarizado`, `tiene_tc`, `tiene_plataforma`, `sin_producto_fin`, `migrante_internacional`, `migrante_interno`, `huerfano_*`, `jefe_hogar`, `conyuge_en_hogar`, `mayor_18`, `hac_critico`, `busca_trabajo`, `disponible_trabajar`, `exp_laboral_previa`, `desalentado`, `trabajo_reciente`, `recibe_remesas`, `recibe_familias_accion`, `recibe_jovenes_accion`, `recibe_colombia_mayor`, `tiene_subsidio_desempleo` | Resumen 0/1 que captura una condición compleja en una sola variable |
+| **Variables derivadas / scores** | `estrato`, `hacinamiento`, `inclusion_fin_score`, `servicios_basicos_score`, `transferencias_gov`, `semanas_desempleo`, `meses_sin_trabajo`, `n_menores_5`, `n_menores_15`, `n_mayores_65`, `n_pet_hogar`, `razon_dependencia` | Combinan varias columnas en una métrica nueva con sentido analítico |
+
+### Justificación de cada variable
+
+- **`sexo`** (desde `P3271`): se usan las etiquetas oficiales del
+  diccionario, **Masculino** y **Femenino**, para no confundirlas con
+  identidad de género (`P3039`).
+- **`grupo_edad`**: agrupa `P6040` en rangos quinquenales empezando en
+  15 años (definición de PET vigente en GEIH desde 2021).
+- **`nivel_educativo`**: agrupa los **13 códigos** de `P3042` siguiendo
+  el orden formal del diccionario DANE (Ninguno → Preescolar → Básica
+  primaria → Básica secundaria → Media → Técnica/Tecnológica →
+  Universitaria → Posgrado), sin mezclar niveles distintos.
+- **`zona`**: el diccionario 2025 solo tiene **2 categorías** oficiales
+  (Cabecera y Resto). El DANE unificó "centro poblado" y "rural
+  disperso" en una sola categoría.
+- **`tenencia`**: conserva las **7 categorías** originales de `P5090`
+  (Propia, Arrendada, Usufructo, Posesión sin título, Propiedad
+  colectiva, Otra) en lugar de colapsarlas.
+- **`es_campesino`**, **`fue_campesino`**, **`comunidad_campesina`** (de
+  `P2057`, `P2059`, `P2061`): trayectoria e identidad campesina.
+  Variables relevantes para perfiles rurales e informalidad.
+- **`padres_presentes`** (`P6083` y `P6081`): composición familiar
+  general (en hogar / fuera del hogar).
+- **`huerfano_madre`** / **`huerfano_padre`** / **`huerfano_alguno`**:
+  separan correctamente el código 3 ("Fallecido/a"). Importante porque
+  la orfandad afecta el ingreso al mercado laboral de manera distinta a
+  la no-cohabitación.
+- **`tipo_trabajo`** (de `P6430`): posición ocupacional. Solo aplica a
+  ocupados; al resto se le asigna *"No aplica (no ocupado)"*.
+- **`conyuge_en_hogar`** (de `P6071`): presencia del cónyuge, indicador
+  de estabilidad familiar.
+- **`mayor_18`**: lo derivamos directamente de `P6040 >= 18` en vez de
+  usar la variable `POB_MAY18` del DANE, porque esa columna trae NA
+  estructural para los menores y al imputarla con la moda perdíamos a
+  todos los del grupo 15-17.
+- **`discapacidad`**: combina las 7 preguntas `P1906S*` considerando los
+  niveles 1 a 3. **`discapacidad_severa`** solo captura nivel 1 ("No
+  puede hacerlo").
+- **Inclusión financiera** (`tiene_cta_corriente`, `bancarizado`,
+  `tiene_tc`, `tiene_plataforma`, `sin_producto_fin`,
+  `inclusion_fin_score`): cinco indicadores binarios y un score
+  agregado. Se incluye **`P5222S11`** (nueva variable 2025 — plataformas
+  móviles tipo Nequi, Daviplata, Bancolombia a la mano) porque es el
+  principal canal de inclusión financiera para jóvenes y poblaciones
+  vulnerables en Colombia.
+- **`migrante_internacional`**: nació fuera del país (`P3373 == 3`) o
+  vivió en el exterior \>6m (`P3376 == 1`).
+- **`migrante_interno`**: nació en otro municipio colombiano
+  (`P3373 == 2`).
+- **`jefe_hogar`**: ser jefe del hogar implica presión económica que
+  afecta la búsqueda de empleo.
+- **`estrato`**: extraído de `P4030S1A1` como entero ordinal. Usamos
+  **99** ("No informa", convención DANE) para los casos sin estrato.
+- **`hacinamiento`** y **`hac_critico`**: cociente personas/cuartos para
+  dormir. Indicador robusto de pobreza estructural; \>3 personas por
+  cuarto se considera hacinamiento crítico (criterio DANE).
+- **`etnia`** (de `P6080`): pertenencia étnica con 6 categorías
+  oficiales (Indígena / Gitano / Raizal / Palenquero / Afrocolombiano /
+  Ninguno). Relevante para brechas laborales.
+- **`actividad_principal`** (de `P6240`): qué hizo la persona la semana
+  pasada (trabajando / buscando / estudiando / oficios del hogar /
+  incapacitado / otra). Útil para distinguir inactividad voluntaria de
+  involuntaria.
+- **`busca_trabajo`**, **`desalentado`**, **`exp_laboral_previa`**,
+  **`disponible_trabajar`**, **`trabajo_reciente`**: indicadores clave
+  de comportamiento laboral. `desalentado` captura a quienes desean
+  trabajar pero ya no buscan por razones de mercado (no porque estén
+  estudiando o jubilados), grupo de alta vulnerabilidad invisible en la
+  tasa oficial de desempleo.
+- **`posicion_ultimo_trabajo`** (de `P7350`) y **`razon_dejo_trabajo`**
+  (de `P7450`): historia laboral reciente para quienes no están ocupados
+  pero tienen experiencia. Para los ocupados o sin experiencia se asigna
+  *"No aplica"*.
+- **`razon_no_busqueda`** (de `P6310`): por qué quienes desean trabajar
+  no han buscado. Diferencia restricciones familiares, salud, edad,
+  estudio y desánimo.
+- **`semanas_desempleo`** (de `P7250`) y **`meses_sin_trabajo`** (de
+  `P7440S1`): duración del desempleo y tiempo fuera del mercado.
+  Variables continuas que el modelo puede usar directamente.
+- **`servicios_basicos_score`**: cuenta cuántos de los 5 servicios
+  públicos (`P4030S1-S5`: energía, gas, alcantarillado, basuras,
+  acueducto) tiene el hogar. 5 = cobertura completa; 0 = sin servicios.
+  Proxy directo de pobreza estructural.
+- **`recibe_remesas`** (de `P7510S2`): hogar con migrantes en el
+  exterior. Correlaciona con menor presión por buscar empleo formal.
+- **Transferencias del gobierno** (`recibe_familias_accion`,
+  `recibe_jovenes_accion`, `recibe_colombia_mayor` y el score agregado
+  `transferencias_gov`): indicador de vulnerabilidad reconocida por el
+  Estado.
+- **`tiene_subsidio_desempleo`** (de `P9460`): formalidad reciente. Solo
+  quienes cotizaron a una caja de compensación pueden recibirlo.
+- **`motivo_migracion`** (de `P3386`): por qué cambió de residencia en
+  los últimos 12 meses. Distingue migración laboral, por conflicto, por
+  estudios o por reagrupamiento familiar. Quienes no cambiaron de
+  residencia entran a *"No cambio de residencia"*.
+- **Composición del hogar** (`n_menores_5`, `n_menores_15`,
+  `n_mayores_65`, `n_pet_hogar`, `razon_dependencia`): se calculan sobre
+  `df_geih` (hogar completo, **antes** del filtro PET) y se unen al
+  `df_modelo` con `left_join` por las llaves del hogar. Esto es
+  indispensable: si las calculáramos sobre `df_modelo` el conteo de
+  menores siempre daría 0, porque PET = 15+. La razón de dependencia se
+  define como (menores de 15 + mayores de 65) / PET activa (15-64) y es
+  predictor clave del desempleo femenino en Colombia.
+- **`departamento`** (de `DPTO`): mapea los 33 códigos DIVIPOLA a
+  nombres legibles (Antioquia, Bogotá DC, Valle, …). Útil para tablas y
+  gráficos, y permite que los modelos basados en árboles exploten la
+  heterogeneidad regional.
+- **`region`**: agrupa los departamentos en las **5 regiones oficiales**
+  de Colombia (Andina, Caribe, Pacífica, Orinoquía, Amazonía), separando
+  `Bogotá DC` por su peso económico particular. El desempleo en Colombia
+  tiene fuerte variación regional (Chocó \>20 %, Bogotá \~11 %, rural
+  \<8 %), así que esta variable da una señal limpia con baja
+  cardinalidad.
+
+```{r recodificar}
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+} else {
+
+
+df_modelo <- df_modelo %>%
+  mutate(
+    # -- Categoricas legibles --
+    # Sexo al nacer (P3271): el diccionario usa Masculino/Femenino
+    sexo = case_when(
+      P3271 == 1 ~ "Masculino",
+      P3271 == 2 ~ "Femenino",
+      TRUE       ~ "No informa"
+    ),
+
+    # Grupos de edad quinquenales (a partir de 15, edad minima de PET en GEIH 2025)
+    grupo_edad = case_when(
+      P6040 <  18 ~ "15-17",
+      P6040 <  25 ~ "18-24",
+      P6040 <  35 ~ "25-34",
+      P6040 <  45 ~ "35-44",
+      P6040 <  55 ~ "45-54",
+      P6040 <  65 ~ "55-64",
+      P6040 >= 65 ~ "65+",
+      TRUE        ~ "No informa"
+    ),
+
+    # Nivel educativo agrupado segun el diccionario DANE (P3042 tiene 13 niveles)
+    nivel_educativo = case_when(
+      P3042 == 1                ~ "Ninguno",
+      P3042 == 2                ~ "Preescolar",
+      P3042 == 3                ~ "Basica primaria",
+      P3042 == 4                ~ "Basica secundaria",
+      P3042 %in% c(5, 6)        ~ "Media (academica/tecnica)",
+      P3042 %in% c(7, 8, 9)     ~ "Tecnica/Tecnologica/Normalista",
+      P3042 == 10               ~ "Universitaria",
+      P3042 %in% c(11, 12, 13)  ~ "Posgrado (Esp./Maest./Doct.)",
+      TRUE                      ~ "No informa"
+    ),
+
+    # Zona segun CLASE en GEIH 2025: solo 2 categorias oficiales
+    # (DANE unifico centro poblado y rural disperso en "Resto")
+    zona = case_when(
+      CLASE == 1 ~ "Cabecera",
+      CLASE == 2 ~ "Resto (centro poblado y rural disperso)",
+      TRUE       ~ "No informa"
+    ),
+
+    # Tenencia de la vivienda (P5090 tiene 7 categorias, conservamos todas)
+    tenencia = case_when(
+      P5090 %in% c(1, 2) ~ "Propia",
+      P5090 == 3         ~ "Arrendada",
+      P5090 == 4         ~ "Usufructo",
+      P5090 == 5         ~ "Posesion sin titulo",
+      P5090 == 6         ~ "Propiedad colectiva",
+      P5090 == 7         ~ "Otra",
+      TRUE               ~ "No informa"
+    ),
+
+    # Autorreconocimiento campesino actual (P2057)
+    es_campesino = case_when(
+      P2057 == 1 ~ "Si",
+      P2057 == 2 ~ "No",
+      TRUE       ~ "No informa"
+    ),
+
+    # Alguna vez se considero campesino (P2059)
+    fue_campesino = case_when(
+      P2059 == 1 ~ "Si",
+      P2059 == 2 ~ "No",
+      TRUE       ~ "No aplica / No informa"
+    ),
+
+    # Considera que su comunidad es campesina (P2061)
+    comunidad_campesina = case_when(
+      P2061 == 1 ~ "Si",
+      P2061 == 2 ~ "No",
+      TRUE       ~ "No aplica / No informa"
+    ),
+
+    # Presencia de padres en el hogar (P6083 madre, P6081 padre)
+    # Distingue residencia de fallecimiento usando indicadores aparte
+    padres_presentes = case_when(
+      P6083 == 1 & P6081 == 1 ~ "Ambos en hogar",
+      P6083 == 1 | P6081 == 1 ~ "Solo uno en hogar",
+      TRUE                    ~ "Ninguno en hogar"
+    ),
+
+    # Tipo de trabajo (P6430 — solo aplica a ocupados, NA para los demas)
+    tipo_trabajo = case_when(
+      P6430 %in% c(1, 2)  ~ "Asalariado (formal)",
+      P6430 == 3          ~ "Empleado domestico",
+      P6430 == 4          ~ "Cuenta propia",
+      P6430 == 5          ~ "Patron o empleador",
+      P6430 == 6          ~ "Familiar sin remuneracion",
+      P6430 == 7          ~ "Jornalero o peon",
+      P6430 == 8          ~ "Otro",
+      TRUE                ~ "No aplica (no ocupado)"
+    ),
+
+    # Pertenencia etnica (P6080)
+    etnia = case_when(
+      P6080 == 1 ~ "Indigena",
+      P6080 == 2 ~ "Gitano/Rrom",
+      P6080 == 3 ~ "Raizal",
+      P6080 == 4 ~ "Palenquero",
+      P6080 == 5 ~ "Afrocolombiano",
+      P6080 == 6 ~ "Ningun grupo etnico",
+      TRUE       ~ "No informa"
+    ),
+
+    # Actividad principal la semana pasada (P6240)
+    actividad_principal = case_when(
+      P6240 == 1 ~ "Trabajando",
+      P6240 == 2 ~ "Buscando trabajo",
+      P6240 == 3 ~ "Estudiando",
+      P6240 == 4 ~ "Oficios del hogar",
+      P6240 == 5 ~ "Incapacitado permanente",
+      P6240 == 6 ~ "Otra actividad",
+      TRUE       ~ "No informa"
+    ),
+
+    # Posicion ocupacional en el ultimo trabajo (P7350 — solo no ocupados con experiencia)
+    posicion_ultimo_trabajo = case_when(
+      P7350 %in% c(1, 2) ~ "Asalariado (formal)",
+      P7350 == 3         ~ "Empleado domestico",
+      P7350 == 4         ~ "Cuenta propia",
+      P7350 == 5         ~ "Patron o empleador",
+      P7350 == 6         ~ "Familiar sin remuneracion",
+      P7350 == 7         ~ "Jornalero o peon",
+      P7350 == 9         ~ "Otro",
+      TRUE               ~ "No aplica / Sin experiencia"
+    ),
+
+    # Razon por la que dejo el ultimo trabajo (P7450)
+    razon_dejo_trabajo = case_when(
+      P7450 == 1 ~ "Despido",
+      P7450 == 2 ~ "Para estudiar",
+      P7450 == 3 ~ "Responsabilidades familiares",
+      P7450 == 4 ~ "Enfermedad o accidente",
+      P7450 == 5 ~ "Jubilacion o retiro",
+      P7450 == 6 ~ "Condiciones insatisfactorias",
+      P7450 == 7 ~ "Cierre de la empresa",
+      P7450 == 8 ~ "Trabajo temporal terminado",
+      P7450 == 9 ~ "Otra",
+      TRUE       ~ "No aplica / Sin experiencia"
+    ),
+
+    # Razon por la que no busco trabajo (P6310 — solo desalentados)
+    razon_no_busqueda = case_when(
+      P6310 == 1                ~ "Ya encontro trabajo",
+      P6310 == 2                ~ "No hay trabajo disponible",
+      P6310 == 3                ~ "Esta esperando",
+      P6310 %in% c(4, 5, 6)     ~ "Desalentado / Sin habilidades",
+      P6310 == 7                ~ "No tiene recursos para negocio",
+      P6310 %in% c(8, 9)        ~ "Edad",
+      P6310 == 10               ~ "Responsabilidades familiares",
+      P6310 == 11               ~ "Problemas de salud",
+      P6310 == 12               ~ "Esta estudiando",
+      P6310 == 13               ~ "Otra razon",
+      TRUE                      ~ "No aplica"
+    ),
+
+    # Motivo del cambio de residencia (P3386)
+    motivo_migracion = case_when(
+      P3386 == 1   ~ "Trabajo",
+      P3386 == 2   ~ "Estudio",
+      P3386 == 3   ~ "Salud",
+      P3386 == 4   ~ "Conflicto armado",
+      P3386 == 5   ~ "Violencia / Inseguridad",
+      P3386 == 6   ~ "Desastres naturales",
+      P3386 == 7   ~ "Conformacion de hogar",
+      P3386 == 8   ~ "Acompañar familia",
+      P3386 == 9   ~ "Motivos culturales",
+      P3386 == 10  ~ "Adquisicion de vivienda",
+      P3386 == 11  ~ "Otro",
+      TRUE         ~ "No cambio de residencia"
+    ),
+
+    # Departamento legible (DPTO viene como codigo DIVIPOLA "05", "11", etc.)
+    departamento = case_when(
+      DPTO == "05" ~ "Antioquia",
+      DPTO == "08" ~ "Atlantico",
+      DPTO == "11" ~ "Bogota DC",
+      DPTO == "13" ~ "Bolivar",
+      DPTO == "15" ~ "Boyaca",
+      DPTO == "17" ~ "Caldas",
+      DPTO == "18" ~ "Caqueta",
+      DPTO == "19" ~ "Cauca",
+      DPTO == "20" ~ "Cesar",
+      DPTO == "23" ~ "Cordoba",
+      DPTO == "25" ~ "Cundinamarca",
+      DPTO == "27" ~ "Choco",
+      DPTO == "41" ~ "Huila",
+      DPTO == "44" ~ "La Guajira",
+      DPTO == "47" ~ "Magdalena",
+      DPTO == "50" ~ "Meta",
+      DPTO == "52" ~ "Nariño",
+      DPTO == "54" ~ "Norte de Santander",
+      DPTO == "63" ~ "Quindio",
+      DPTO == "66" ~ "Risaralda",
+      DPTO == "68" ~ "Santander",
+      DPTO == "70" ~ "Sucre",
+      DPTO == "73" ~ "Tolima",
+      DPTO == "76" ~ "Valle",
+      DPTO == "81" ~ "Arauca",
+      DPTO == "85" ~ "Casanare",
+      DPTO == "86" ~ "Putumayo",
+      DPTO == "88" ~ "San Andres",
+      DPTO == "91" ~ "Amazonas",
+      DPTO == "94" ~ "Guainia",
+      DPTO == "95" ~ "Guaviare",
+      DPTO == "97" ~ "Vaupes",
+      DPTO == "99" ~ "Vichada",
+      TRUE         ~ "Otro"
+    ),
+
+    # Region geografica (5 oficiales + Bogota separada por su tamaño).
+    # El desempleo en Colombia tiene fuerte variacion regional, asi que
+    # agrupar por region da mas señal al modelo que el codigo crudo.
+    region = case_when(
+      DPTO == "11"                                                       ~ "Bogota DC",
+      DPTO %in% c("05","15","17","25","41","54","63","66","68","73")    ~ "Andina",
+      DPTO %in% c("08","13","20","23","44","47","70","88")              ~ "Caribe",
+      DPTO %in% c("19","27","52","76")                                  ~ "Pacifica",
+      DPTO %in% c("50","81","85","99")                                  ~ "Orinoquia",
+      DPTO %in% c("18","86","91","94","95","97")                        ~ "Amazonia",
+      TRUE                                                               ~ "Otro"
+    ),
+
+
+    # -- Indicadores binarios --
+    # Discapacidad: cualquier persona con dificultad (codigos 1, 2 o 3) en
+    # al menos una de las 7 dimensiones de P1906S*. El nivel 4 es "Sin dificultad".
+    discapacidad = as.integer(
+      (P1906S1 %in% 1:3 | P1906S3 %in% 1:3 | P1906S4 %in% 1:3 |
+       P1906S5 %in% 1:3 | P1906S6 %in% 1:3 | P1906S7 %in% 1:3 |
+       P1906S8 %in% 1:3) %in% TRUE
+    ),
+
+    # Discapacidad severa: solo "No puede hacerlo" (codigo 1)
+    discapacidad_severa = as.integer(
+      (P1906S1 == 1 | P1906S3 == 1 | P1906S4 == 1 |
+       P1906S5 == 1 | P1906S6 == 1 | P1906S7 == 1 | P1906S8 == 1) %in% TRUE
+    ),
+
+    # Inclusion financiera (multi-respuesta ya tratadas: 0/1 directo)
+    tiene_cta_corriente = as.integer(P5222S1 == 1),
+    bancarizado         = as.integer(P5222S2 == 1),   # cuenta de ahorros
+    tiene_tc            = as.integer(P5222S7 == 1),   # tarjeta de credito
+    tiene_plataforma    = as.integer(P5222S11 == 1),  # nuevo 2025: Nequi/Daviplata/etc.
+    sin_producto_fin    = as.integer(P5222S9 == 1),   # ningun producto financiero
+
+    # Indice agregado de inclusion financiera (0 = sin productos, hasta 4)
+    inclusion_fin_score = tiene_cta_corriente + bancarizado +
+                          tiene_tc + tiene_plataforma,
+
+    # Migracion internacional (nacio fuera o vivio en exterior >6m)
+    migrante_internacional = as.integer((P3373 == 3 | P3376 == 1) %in% TRUE),
+
+    # Migracion interna (nacio en otro municipio de Colombia)
+    migrante_interno = as.integer((P3373 == 2) %in% TRUE),
+
+    # Orfandad: padre y/o madre fallecida (codigo 3 en P6083/P6081)
+    huerfano_madre = as.integer((P6083 == 3) %in% TRUE),
+    huerfano_padre = as.integer((P6081 == 3) %in% TRUE),
+    huerfano_alguno = as.integer((P6083 == 3 | P6081 == 3) %in% TRUE),
+
+    # Jefe del hogar (P6050 == 1)
+    jefe_hogar = as.integer((P6050 == 1) %in% TRUE),
+
+    # Conyuge reside en el hogar (P6071, solo aplica si tiene pareja)
+    conyuge_en_hogar = as.integer((P6071 == 1) %in% TRUE),
+
+    # Mayor de 18: lo derivamos directamente de la edad
+    mayor_18 = as.integer(P6040 >= 18),
+
+
+    # -- Indicadores binarios de busqueda y experiencia laboral --
+    # Busco trabajo en las ultimas 4 semanas (P6280 ya pre-tratada 0/1)
+    busca_trabajo = as.integer(P6280 == 1),
+
+    # Disponibilidad inmediata para trabajar (P6351 / P744)
+    disponible_trabajar = as.integer((P6351 == 1 | P744 == 1) %in% TRUE),
+
+    # Experiencia laboral previa (P7430 — alguna vez trabajo 2+ semanas)
+    exp_laboral_previa = as.integer(P7430 == 1),
+
+    # Desalentado: desea trabajar pero no busca, NO por estudio ni jubilacion
+    desalentado = as.integer(
+      (busca_trabajo == 0 &
+       P6310 %in% c(2, 3, 4, 5, 6, 8, 9)) %in% TRUE
+    ),
+
+    # Trabajo recientemente (P6320 — al menos 2 semanas en los ultimos 12 meses)
+    trabajo_reciente = as.integer(P6320 == 1),
+
+
+    # -- Indicadores binarios de vulnerabilidad / dependencia economica --
+    recibe_remesas         = as.integer(P7510S2 == 1),
+    recibe_familias_accion = as.integer(P1661S1 == 1),
+    recibe_jovenes_accion  = as.integer(P1661S2 == 1),
+    recibe_colombia_mayor  = as.integer(P1661S3 == 1),
+
+    # Indice agregado de transferencias del gobierno (0 a 3)
+    transferencias_gov = recibe_familias_accion +
+                         recibe_jovenes_accion +
+                         recibe_colombia_mayor,
+
+    # Recibio subsidio de desempleo (P9460)
+    tiene_subsidio_desempleo = as.integer(P9460 == 1),
+
+
+    # -- Variables derivadas --
+    # Estrato: 1-6 valido. 99 = sin estrato / no informa (convencion DANE).
+    estrato = ifelse(P4030S1A1 %in% 1:6,
+                     as.integer(P4030S1A1), 99L),
+
+    # Hacinamiento: 0 si no se puede calcular (P5010 = 0)
+    hacinamiento = ifelse(P5010 > 0, P6008 / P5010, 0),
+
+    # Hacinamiento critico (>3 personas por cuarto, criterio DANE)
+    hac_critico = as.integer((hacinamiento > 3) %in% TRUE),
+
+    # Servicios basicos (NBI parcial): cuenta cuantos de los 5 servicios
+    # publicos tiene el hogar. 5 = cobertura completa; 0 = sin servicios.
+    servicios_basicos_score = as.integer(P4030S1 == 1) +
+                              as.integer(P4030S2 == 1) +
+                              as.integer(P4030S3 == 1) +
+                              as.integer(P4030S4 == 1) +
+                              as.integer(P4030S5 == 1),
+
+    # Semanas buscando trabajo (P7250 ya pre-tratada con 0 cuando no aplica).
+    # Los códigos DANE 98, 99, 998, 999 ("No sabe / No informa") se convierten
+    # a 0 porque 19 años buscando empleo no es plausible.
+    semanas_desempleo = ifelse(P7250 %in% c(98, 99, 998, 999) | P7250 > 200,
+                               0L, as.integer(P7250)),
+
+    # Meses desde el ultimo trabajo (P7440S1 ya pre-tratada con 0)
+    meses_sin_trabajo = ifelse(P7440S1 %in% c(98, 99, 998, 999) | P7440S1 > 600,
+                               0L, as.integer(P7440S1))
+  )
+
+# Composicion del hogar: se calcula sobre df_geih (hogar completo, con
+# menores) porque df_modelo ya esta filtrado a PET.
+hogar_composicion <- df_geih %>%
+  group_by(PERIODO, DIRECTORIO, SECUENCIA_P) %>%
+  summarise(
+    n_menores_5    = sum(P6040 < 5,  na.rm = TRUE),
+    n_menores_15   = sum(P6040 < 15, na.rm = TRUE),
+    n_mayores_65   = sum(P6040 >= 65, na.rm = TRUE),
+    n_pet_hogar    = sum(P6040 >= 15 & P6040 < 65, na.rm = TRUE),
+    razon_dependencia = ifelse(n_pet_hogar > 0,
+                               (n_menores_15 + n_mayores_65) / n_pet_hogar,
+                               0),
+    .groups = "drop"
+  )
+
+# `left_join` propaga las 5 columnas a cada miembro del hogar.
+df_modelo <- df_modelo %>%
+  left_join(hogar_composicion,
+            by = c("PERIODO", "DIRECTORIO", "SECUENCIA_P"))
+
+# df_geih y hogar_composicion ya no se necesitan
+rm(df_geih, hogar_composicion)
+gc()
+}
+```
+
+### Vista rápida de las nuevas variables
+
+```{r recodificar-vista}
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+} else {
+df_modelo %>%
+  count(sexo, grupo_edad) %>%
+  print(n = Inf)
+
+cat("\nDistribucion por nivel educativo:\n")
+print(table(df_modelo$nivel_educativo))
+
+cat("\nDistribucion por zona:\n")
+print(table(df_modelo$zona))
+}
+```
+
+------------------------------------------------------------------------
+
+## Paso 7 — Conversión a `factor`
+
+En R, las variables categóricas se manejan mejor como `factor` que como
+texto. Esto evita que `ggplot` ordene los valores alfabéticamente en vez
+de seguir un orden lógico, y permite que los algoritmos de clasificación
+(árboles, *random forest*, *gradient boosting*) las reconozcan
+correctamente como variables nominales en lugar de interpretarlas como
+números arbitrarios.
+
+> Convertimos a `factor` las variables recodificadas para asegurar
+> consistencia de tipos antes del modelado.
+
+```{r a-factor}
+if (df_modelo_listo) {
+  cat("df_modelo ya cargado, se omite este paso\n")
+  # Igualmente mostramos la estructura para verificación
+  str(df_modelo, list.len = 20)
+} else {
+  # `across()` convierte varias columnas a factor en una sola pasada.
+  df_modelo <- df_modelo %>%
+    mutate(across(
+      c(sexo, grupo_edad, nivel_educativo, zona, tenencia,
+        es_campesino, fue_campesino, comunidad_campesina,
+        padres_presentes, tipo_trabajo, estado_laboral,
+        # Nuevas categoricas (modulos de fuerza de trabajo / no ocupados / migracion)
+        etnia, actividad_principal, posicion_ultimo_trabajo,
+        razon_dejo_trabajo, razon_no_busqueda, motivo_migracion,
+        # Geograficas legibles
+        departamento, region),
+      as.factor
+    ))
+  saveRDS(df_modelo, "df_modelo.rds")
+
+  # Verificacion rapida de tipos (limitada a 20 columnas).
+  str(df_modelo, list.len = 20)
+}
+```
+
+------------------------------------------------------------------------
+
+## Paso 8 — Dataset final y validaciones
+
+Resumen del dataset listo para el EDA y el modelado.
+
+```{r dataset-final, eval=TRUE}
+# Resumen final. `prop.table()` pasa frecuencias a proporciones.
+cat("=========================================\n")
+cat("  DATASET FINAL PARA MODELADO\n")
+cat("=========================================\n")
+cat("Filas    :", format(nrow(df_modelo), big.mark = ","), "\n")
+cat("Columnas :", ncol(df_modelo), "\n")
+cat("Periodo  :", min(df_modelo$ANIO), "–", max(df_modelo$ANIO), "\n\n")
+
+cat("Distribucion del estado laboral:\n")
+print(prop.table(table(df_modelo$estado_laboral)) %>% round(4))
+
+cat("\nTasa de desempleo por año (definicion DANE):\n")
+print(tasa_desempleo_anual)
+```
+
+### Validación final de calidad
+
+```{r validacion-final, eval=TRUE}
+# 1) No deben quedar NAs tras imputacion + pre-tratamiento.
+total_na <- sum(is.na(df_modelo))
+cat("Total de NAs en el dataset:", total_na, "\n")
+
+# Si por error alguno quedo, mostramos las columnas afectadas.
+if (total_na > 0) {
+  nas_por_col <- sapply(df_modelo, function(x) sum(is.na(x)))
+  cat("\nColumnas con NAs:\n")
+  print(sort(nas_por_col[nas_por_col > 0], decreasing = TRUE))
+}
+
+# 2) Rangos plausibles (detectan lecturas absurdas del CSV).
+cat("\nRangos de variables clave:\n")
+cat("  Edad   :", min(df_modelo$P6040), "–", max(df_modelo$P6040), "\n")
+cat("  Estrato:", min(df_modelo$estrato), "–",
+                  max(df_modelo$estrato), "(99 = sin estrato / no informa)\n")
+cat("  Hogar  :", min(df_modelo$P6008), "–", max(df_modelo$P6008), "personas\n")
+```
+
