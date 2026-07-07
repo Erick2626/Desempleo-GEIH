@@ -1,0 +1,5 @@
+include model/VERSION
+include model/config.yml
+include VERSION
+recursive-include model/trained_models *.pkl
+recursive-include model *.py

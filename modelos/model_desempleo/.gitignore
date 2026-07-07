@@ -1,0 +1,7 @@
+model/datasets/*.csv
+model/trained_models/*.pkl
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc

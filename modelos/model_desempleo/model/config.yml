@@ -1,0 +1,69 @@
+# Configuracion del paquete model_desempleo
+package_name: model_desempleo
+
+# Datos
+training_data_file: df_modelo.csv
+pipeline_save_file: modelo_desempleo_output_v
+
+# Variable objetivo
+target: desempleado
+
+# Nivel de umbral (Youden) - se sobreescribe tras entrenar
+decision_threshold: 0.4846
+
+# Variables de entrada (20 predictores del EDA)
+features:
+  - sexo
+  - grupo_edad
+  - nivel_educativo
+  - etnia
+  - discapacidad
+  - jefe_hogar
+  - mayor_18
+  - region
+  - zona
+  - estrato
+  - hacinamiento
+  - servicios_basicos_score
+  - tenencia
+  - n_menores_15
+  - n_mayores_65
+  - razon_dependencia
+  - inclusion_fin_score
+  - sin_producto_fin
+  - transferencias_gov
+  - recibe_remesas
+
+# Categoricas (one-hot)
+categorical_vars:
+  - sexo
+  - grupo_edad
+  - nivel_educativo
+  - etnia
+  - region
+  - zona
+  - tenencia
+
+# Numericas
+numerical_vars:
+  - discapacidad
+  - jefe_hogar
+  - mayor_18
+  - estrato
+  - hacinamiento
+  - servicios_basicos_score
+  - n_menores_15
+  - n_mayores_65
+  - razon_dependencia
+  - inclusion_fin_score
+  - sin_producto_fin
+  - transferencias_gov
+  - recibe_remesas
+
+# Hiperparametros XGBoost (mejor combinacion del grid search)
+test_size: 0.3
+random_state: 123
+eta: 0.05
+max_depth: 8
+n_estimators: 200
+subsample: 0.8

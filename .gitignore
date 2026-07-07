@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+
+# Entornos virtuales
+.venv/
+env-*/
+.venv-*/
+
+# MLflow local (las corridas reales viven en el tracking server de EC2)
+mlruns/
+mlruns_local_test/
+
+# R
+.Rhistory
+.RData
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
