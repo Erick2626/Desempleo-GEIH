@@ -1,4 +1,4 @@
-streamlit
-requests
+shiny
 pandas
 plotly
+httpx
