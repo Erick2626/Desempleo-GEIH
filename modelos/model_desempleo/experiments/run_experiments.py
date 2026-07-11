@@ -2,8 +2,9 @@
 Comparacion de modelos supervisados para la prediccion de desempleo,
 registrada en MLflow.
 
-Entrena y compara un Arbol de decision y un XGBoost, ambos sobre el mismo
-split 70/30 estratificado y con balanceo por submuestreo 50/50 en train.
+Entrena y compara un Arbol de decision, un Random Forest y un XGBoost,
+los tres sobre el mismo split 70/30 estratificado y con balanceo por
+submuestreo 50/50 en train.
 
 Cada corrida registra en MLflow: parametros, metricas (AUC-ROC, F1, precision,
 recall sobre la clase 1, con umbral de Youden) y el pipeline entrenado
@@ -33,6 +34,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline as SkPipeline
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
@@ -126,7 +128,17 @@ def main(tracking_uri: str, experiment_name: str):
         "arbol_decision", "arbol_decision", pipe_arbol, X_bal, y_bal, X_test, y_test, params_arbol
     )
 
-    # Modelo 2: XGBoost (mejor combinacion del grid search) - modelo desplegado
+    # Modelo 2: Random Forest
+    params_rf = {"n_estimators": 200, "max_depth": 8, "min_samples_leaf": 50}
+    pipe_rf = SkPipeline([
+        ("preprocessor", build_preprocessor()),
+        ("classifier", RandomForestClassifier(random_state=cfg.random_state, **params_rf)),
+    ])
+    resultados["random_forest"] = run_experiment(
+        "random_forest", "random_forest", pipe_rf, X_bal, y_bal, X_test, y_test, params_rf
+    )
+
+    # Modelo 3: XGBoost (mejor combinacion del grid search) - modelo desplegado
     params_xgb = dict(
         objective="binary:logistic", eval_metric="auc",
         eta=cfg.eta, max_depth=cfg.max_depth, n_estimators=cfg.n_estimators,
