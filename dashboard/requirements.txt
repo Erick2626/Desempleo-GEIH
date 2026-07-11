@@ -1,4 +1,0 @@
-shiny
-pandas
-plotly
-httpx
