@@ -1,18 +1,17 @@
 # dashboard/app.py
 import shiny as sh
 from shiny import ui, reactive, render
-from shiny.types import FileInfo
 import pandas as pd
 import plotly.express as px
 import httpx
 import asyncio
 
 # --- CONFIGURACIÓN DE LA API ---
-API_URL = "http://13.220.102.90:8001/predict"  
+API_URL = "http://13.220.102.90:8001/predict"  # <-- CAMBIA ESTO POR TU IP REAL DE EC2
 
 # --- INTERFAZ DE USUARIO ---
 app_ui = ui.page_navbar(
-    ui.nav(
+    ui.nav_panel(
         "📈 Panorama General",
         ui.layout_sidebar(
             ui.panel_sidebar(
@@ -21,6 +20,7 @@ app_ui = ui.page_navbar(
                 ui.input_select("depto_filter", "Departamento", choices=["Antioquia", "Atlántico", "Bogotá D.C.", "Valle", "Amazonas"])
             ),
             ui.panel_main(
+                # Usamos output_ui para que Plotly se renderice correctamente (no render.plot)
                 ui.row(
                     ui.column(6, ui.output_ui("map_card")),
                     ui.column(6, ui.output_ui("line_card"))
@@ -28,7 +28,7 @@ app_ui = ui.page_navbar(
             )
         )
     ),
-    ui.nav(
+    ui.nav_panel(
         "🔍 Predicción Individual",
         ui.layout_sidebar(
             ui.panel_sidebar(
@@ -72,7 +72,7 @@ app_ui = ui.page_navbar(
 # --- LÓGICA DEL SERVIDOR ---
 def server(input, output, session):
     
-    # 1. Lógica de la Pestaña Panorama (Visualizaciones simuladas para prototipo)
+    # 1. Lógica de la Pestaña Panorama (Visualizaciones con Plotly directamente en render.ui)
     @output
     @render.ui
     def map_card():
@@ -83,12 +83,7 @@ def server(input, output, session):
         fig = px.choropleth(df, locations='Departamento', locationmode='USA-states', 
                             color='Tasa_Desempleo', scope='south america', 
                             title='Tasa de Desempleo Departamental (%)')
-        return ui.card(ui.card_header("Mapa de Calor"), ui.output_plot("render_map"))
-
-    @output
-    @render.plot
-    def render_map():
-        return px.choropleth(...) # Implementación simplificada
+        return ui.card(ui.card_header("Mapa de Calor"), fig)
 
     @output
     @render.ui
@@ -98,18 +93,12 @@ def server(input, output, session):
             'Tasa': [11.5, 10.8, 9.9, 10.2, 11.0, 11.8, 12.1, 11.5, 10.9, 10.5, 10.8, 11.2]
         })
         fig = px.line(df_series, x='Fecha', y='Tasa', title='Evolución Mensual del Desempleo')
-        return ui.card(ui.card_header("Serie de Tiempo"), ui.output_plot("render_line"))
-
-    @output
-    @render.plot
-    def render_line():
-        # Plotly se renderiza en Shiny con render.plot, pero para interactividad pura se usa render.ui con plotly.express
-        pass # Alternativa más robusta abajo
+        return ui.card(ui.card_header("Serie de Tiempo"), fig)
 
     # 2. Lógica de la Pestaña Predicción (Consumo de API)
     @reactive.event(input.btn_predict)
     async def get_prediction():
-        # Construir el payload según tu DataInputSchema (model/processing/validation.py)
+        # Construir el payload según tu DataInputSchema
         payload = [{
             "sexo": input.sexo(),
             "grupo_edad": input.grupo_edad(),
@@ -117,7 +106,7 @@ def server(input, output, session):
             "etnia": input.etnia(),
             "discapacidad": 1 if input.discapacidad() == "Sí" else 0,
             "jefe_hogar": 1 if input.jefe_hogar() == "Sí" else 0,
-            "mayor_18": 1, # Fijo ya que es PET
+            "mayor_18": 1, 
             "region": input.region(),
             "zona": input.zona(),
             "estrato": input.estrato(),
@@ -159,8 +148,7 @@ def server(input, output, session):
         data = result[0]
         prob = data['probability']
         clase_text = "Desempleado" if data['class'] == 1 else "Ocupado/Inactivo"
-        color = "danger" if data['class'] == 1 else "success"
-
+        
         return ui.card(
             ui.card_header("📊 Resultado de la Predicción"),
             ui.h3(f"Clase Predicha: {clase_text}", style=f"color: {'red' if data['class'] == 1 else 'green'}"),
