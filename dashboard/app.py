@@ -7,7 +7,7 @@ import httpx
 import asyncio
 
 # --- CONFIGURACIÓN DE LA API ---
-API_URL = "http://13.220.102.90:8001/predict"  # <-- CAMBIA ESTO POR TU IP REAL DE EC2
+API_URL = "http://localhost:8001/predict"  # <-- CAMBIA ESTO POR TU IP REAL DE EC2
 
 # --- INTERFAZ DE USUARIO ---
 app_ui = ui.page_navbar(
