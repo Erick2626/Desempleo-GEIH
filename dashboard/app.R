@@ -17,11 +17,15 @@ cat("Cargando datos...\n")
 # working directory en la carpeta de la app. Para correr localmente, abra el
 # proyecto en esta carpeta o ejecute shiny::runApp("dashboard").
 
-if (!file.exists("df_modelo.rds")) {
-  stop("No se encuentra df_modelo.rds. Copia el archivo a la carpeta del app.")
+# df_dashboard.rds es una version liviana de df_modelo.rds (13 columnas, muestra
+# de 50,000 filas), generada una sola vez con prepare_dashboard_data.R. Cargar
+# el df_modelo.rds completo (1.93M filas, ~40 columnas, 59 MB) causaba un OOM
+# kill en el contenedor (limite de memoria de 1 GB en Railway).
+if (!file.exists("df_dashboard.rds")) {
+  stop("No se encuentra df_dashboard.rds. Ejecuta prepare_dashboard_data.R primero.")
 }
 
-df_modelo <- readRDS("df_modelo.rds")
+df_ft <- readRDS("df_dashboard.rds")
 
 # =============================================================================
 # CONSTANTES
@@ -50,14 +54,6 @@ API_PORT <- Sys.getenv("API_PORT", unset = "8001")
 API_ENDPOINT <- .build_api_endpoint()
 
 # =============================================================================
-# MUESTRA PARA EDA
-# =============================================================================
-set.seed(123)
-df_ft <- df_modelo %>%
-  filter(estado_laboral %in% c("Ocupado", "Desocupado")) %>%
-  sample_n(min(50000, n()))
-
-# =============================================================================
 # VARIABLES PREDICTORAS
 # =============================================================================
 # El tablero ya NO preprocesa ni predice localmente: envia el perfil crudo
@@ -68,13 +64,13 @@ df_ft <- df_modelo %>%
 # OPCIONES DE SELECTORES
 # =============================================================================
 opciones <- list(
-  sexo = levels(df_modelo$sexo),
+  sexo = levels(df_ft$sexo),
   grupo_edad = c("15-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"),
-  nivel_educativo = levels(df_modelo$nivel_educativo),
-  etnia = levels(df_modelo$etnia),
-  region = levels(df_modelo$region),
-  zona = levels(df_modelo$zona),
-  tenencia = levels(df_modelo$tenencia)
+  nivel_educativo = levels(df_ft$nivel_educativo),
+  etnia = levels(df_ft$etnia),
+  region = levels(df_ft$region),
+  zona = levels(df_ft$zona),
+  tenencia = levels(df_ft$tenencia)
 )
 
 # =============================================================================
@@ -629,7 +625,7 @@ server <- function(input, output, session) {
   })
   
   # -------------------------------------------------------------------------
-  # Output: Caja de probabilidad (CORREGIDO)
+  # Output: Caja de probabilidad 
   # -------------------------------------------------------------------------
   output$caja_probabilidad <- renderUI({
     # Si el bot?n no se ha presionado a?n, mostrar marcador de posici?n

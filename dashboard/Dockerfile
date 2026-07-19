@@ -18,11 +18,16 @@ WORKDIR /opt/app
 # Instalar dependencias (paquetes de R usados en app.R; sin xgboost, con httr/jsonlite).
 # install.packages() no propaga error como codigo de salida: se verifica
 # explicitamente que cada paquete quedo instalado, o el build falla.
-ADD ./ /opt/app/
 RUN R -e "pkgs <- c('shiny','shinydashboard','shinycssloaders','tidyverse','plotly','DT','scales','httr','jsonlite'); \
     install.packages(pkgs, repos='https://cloud.r-project.org/'); \
     faltantes <- setdiff(pkgs, rownames(installed.packages())); \
     if (length(faltantes) > 0) { cat('Fallo instalando:', paste(faltantes, collapse=', '), '\n'); quit(status = 1) }"
+
+# Copiar solo lo que la app necesita en runtime (df_dashboard.rds liviano,
+# no el df_modelo.rds completo ni el modelo, que ya no se usan localmente)
+COPY app.R           /opt/app/app.R
+COPY df_dashboard.rds /opt/app/df_dashboard.rds
+COPY run.sh          /opt/app/run.sh
 
 # Hacer el run.sh ejecutable
 RUN chmod +x /opt/app/run.sh
