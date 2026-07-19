@@ -2,33 +2,52 @@ library(shiny)
 library(shinydashboard)
 library(shinycssloaders)
 library(tidyverse)
-library(xgboost)
 library(plotly)
 library(DT)
 library(scales)
+library(httr)      # llamadas HTTP a la API REST (POST /api/v1/predict)
+library(jsonlite)  # serializacion del payload JSON
 
 # =============================================================================
-# CARGA DE MODELO Y DATOS
+# CARGA DE DATOS
 # =============================================================================
-cat("Cargando modelo y datos...\n")
+cat("Cargando datos...\n")
 
-setwd("C:/Users/corys/OneDrive/Desktop/MIIA/Semestres/III/Despliegue/Desempleo-GEIH/dashboard")
+# Sin setwd() con ruta absoluta: Shiny Server (y el contenedor Docker) dejan el
+# working directory en la carpeta de la app. Para correr localmente, abra el
+# proyecto en esta carpeta o ejecute shiny::runApp("dashboard").
 
 if (!file.exists("df_modelo.rds")) {
   stop("No se encuentra df_modelo.rds. Copia el archivo a la carpeta del app.")
 }
-if (!file.exists("modelo_xgb.model")) {
-  stop("No se encuentra modelo_xgb.model. Copia el archivo a la carpeta del app.")
-}
 
-modelo_xgb <- xgb.load("modelo_xgb.model")
 df_modelo <- readRDS("df_modelo.rds")
 
 # =============================================================================
 # CONSTANTES
 # =============================================================================
-THRESHOLD_OPTIMO <- 0.493
+THRESHOLD_OPTIMO <- 0.493   # solo fallback si la API no devuelve umbral_usado
 TASA_NACIONAL <- 11.3
+
+# =============================================================================
+# CONEXION A LA API REST  
+# =============================================================================
+# En despliegue, el contenedor del tablero recibe API_URL y API_PORT apuntando
+# a la API ya desplegada. En local usa 127.0.0.1:8001 por defecto.
+API_URL  <- Sys.getenv("API_URL",  unset = "http://127.0.0.1")
+API_PORT <- Sys.getenv("API_PORT", unset = "8001")
+
+# Arma la URL de /api/v1/predict. Soporta IP:puerto (EC2/local) y dominio
+# https sin puerto (Railway).
+.build_api_endpoint <- function(url = API_URL, port = API_PORT) {
+  base <- url
+  if (!grepl("^https?://", base)) base <- paste0("http://", base)
+  if (nzchar(port) && !grepl("^https://", base) && !grepl(":[0-9]+$", base)) {
+    base <- paste0(base, ":", port)
+  }
+  paste0(base, "/api/v1/predict")
+}
+API_ENDPOINT <- .build_api_endpoint()
 
 # =============================================================================
 # MUESTRA PARA EDA
@@ -41,28 +60,9 @@ df_ft <- df_modelo %>%
 # =============================================================================
 # VARIABLES PREDICTORAS
 # =============================================================================
-vars_x <- c("sexo", "grupo_edad", "nivel_educativo", "etnia",
-            "discapacidad", "jefe_hogar", "mayor_18",
-            "region", "zona",
-            "estrato", "hacinamiento", "servicios_basicos_score",
-            "tenencia", "n_menores_15", "n_mayores_65", "razon_dependencia",
-            "inclusion_fin_score", "sin_producto_fin",
-            "transferencias_gov", "recibe_remesas")
-
-# =============================================================================
-# MATRIZ DE REFERENCIA
-# =============================================================================
-set.seed(42)
-df_template <- df_modelo %>%
-  filter(estado_laboral %in% c("Ocupado", "Desocupado")) %>%
-  select(all_of(c(vars_x, "desempleado"))) %>%
-  mutate(y = factor(ifelse(desempleado == 1, "D", "O"), levels = c("D", "O"))) %>%
-  select(-desempleado) %>%
-  drop_na() %>%
-  sample_n(1000)
-
-mat_ref <- model.matrix(y ~ . - 1, data = df_template)
-cols_modelo <- colnames(mat_ref)
+# El tablero ya NO preprocesa ni predice localmente: envia el perfil crudo
+# (20 variables) a la API, y el pipeline empaquetado se encarga del one-hot y
+# la inferencia. Ver el eventReactive `prediccion` en el server.
 
 # =============================================================================
 # OPCIONES DE SELECTORES
@@ -156,7 +156,7 @@ PERFILES_PRESET <- list(
   )
 )
 
-cat("App lista. df_ft:", nrow(df_ft), "filas | cols matriz:", length(cols_modelo), "\n")
+cat("App lista. df_ft:", nrow(df_ft), "filas | API endpoint:", API_ENDPOINT, "\n")
 
 # =============================================================================
 # PALETAS Y TEMA
@@ -562,41 +562,70 @@ server <- function(input, output, session) {
   # Predicci?n (reactiva)
   # -------------------------------------------------------------------------
   prediccion <- eventReactive(input$btn_predecir, {
-    nuevo <- df_template[1, ]
-    
-    nuevo$sexo <- factor(input$in_sexo, levels = levels(df_template$sexo))
-    nuevo$grupo_edad <- factor(input$in_grupo_edad, levels = levels(df_template$grupo_edad))
-    nuevo$nivel_educativo <- factor(input$in_nivel_educativo, levels = levels(df_template$nivel_educativo))
-    nuevo$etnia <- factor(input$in_etnia, levels = levels(df_template$etnia))
-    nuevo$region <- factor(input$in_region, levels = levels(df_template$region))
-    nuevo$zona <- factor(input$in_zona, levels = levels(df_template$zona))
-    nuevo$tenencia <- factor(input$in_tenencia, levels = levels(df_template$tenencia))
-    
-    nuevo$discapacidad <- as.integer(input$in_discapacidad)
-    nuevo$jefe_hogar <- as.integer(input$in_jefe_hogar)
-    nuevo$mayor_18 <- ifelse(input$in_grupo_edad == "15-17", 0L, 1L)
-    nuevo$estrato <- as.integer(input$in_estrato)
-    nuevo$hacinamiento <- input$in_hacinamiento
-    nuevo$servicios_basicos_score <- as.integer(input$in_servicios)
-    nuevo$n_menores_15 <- as.integer(input$in_n_menores)
-    nuevo$n_mayores_65 <- as.integer(input$in_n_mayores)
-    nuevo$razon_dependencia <- (input$in_n_menores + input$in_n_mayores) / max(1, 2)
-    nuevo$inclusion_fin_score <- as.integer(input$in_inclusion)
-    nuevo$sin_producto_fin <- as.integer(input$in_sin_producto)
-    nuevo$transferencias_gov <- as.integer(input$in_transferencias)
-    nuevo$recibe_remesas <- as.integer(input$in_remesas)
-    
-    df_para_predecir <- bind_rows(df_template, nuevo)
-    X_full <- model.matrix(y ~ . - 1, data = df_para_predecir)
-    X_nuevo <- X_full[nrow(X_full), , drop = FALSE]
-    
-    cols_faltantes <- setdiff(cols_modelo, colnames(X_nuevo))
-    for (c in cols_faltantes) X_nuevo <- cbind(X_nuevo, setNames(data.frame(0), c))
-    
-    X_nuevo <- X_nuevo[, cols_modelo, drop = FALSE]
-    X_nuevo <- as.matrix(X_nuevo)
-    
-    list(prob = as.numeric(predict(modelo_xgb, X_nuevo)))
+    # Perfil con las 20 variables crudas que espera el esquema DataInputSchema
+    # de la API. El one-hot y la inferencia los hace el pipeline empaquetado.
+    perfil <- list(
+      sexo                    = input$in_sexo,
+      grupo_edad              = input$in_grupo_edad,
+      nivel_educativo         = input$in_nivel_educativo,
+      etnia                   = input$in_etnia,
+      region                  = input$in_region,
+      zona                    = input$in_zona,
+      tenencia                = input$in_tenencia,
+      discapacidad            = as.integer(input$in_discapacidad),
+      jefe_hogar              = as.integer(input$in_jefe_hogar),
+      mayor_18                = ifelse(input$in_grupo_edad == "15-17", 0L, 1L),
+      estrato                 = as.integer(input$in_estrato),
+      hacinamiento            = as.numeric(input$in_hacinamiento),
+      servicios_basicos_score = as.integer(input$in_servicios),
+      n_menores_15            = as.integer(input$in_n_menores),
+      n_mayores_65            = as.integer(input$in_n_mayores),
+      razon_dependencia       = (input$in_n_menores + input$in_n_mayores) / max(1, 2),
+      inclusion_fin_score     = as.integer(input$in_inclusion),
+      sin_producto_fin        = as.integer(input$in_sin_producto),
+      transferencias_gov      = as.integer(input$in_transferencias),
+      recibe_remesas          = as.integer(input$in_remesas)
+    )
+
+    body_json <- jsonlite::toJSON(list(inputs = list(perfil)),
+                                  auto_unbox = TRUE, digits = NA)
+
+    resp <- tryCatch(
+      httr::POST(API_ENDPOINT,
+                 body = body_json,
+                 httr::content_type_json(),
+                 httr::timeout(20)),
+      error = function(e) e
+    )
+
+    # Fallo de conexion (API caida, URL incorrecta, timeout)
+    if (inherits(resp, "error")) {
+      return(list(ok = FALSE,
+                  msg = paste0("No se pudo conectar con la API (", API_ENDPOINT,
+                               "): ", conditionMessage(resp))))
+    }
+
+    # Respuesta HTTP no exitosa (400 validacion, 500, etc.)
+    if (httr::status_code(resp) != 200) {
+      detalle <- tryCatch(httr::content(resp, as = "text", encoding = "UTF-8"),
+                          error = function(e) "")
+      return(list(ok = FALSE,
+                  msg = paste0("La API respondio codigo ", httr::status_code(resp),
+                               ". ", substr(detalle, 1, 300))))
+    }
+
+    # Respuesta OK: parsear el JSON y tomar la primera prediccion del arreglo
+    txt  <- httr::content(resp, as = "text", encoding = "UTF-8")
+    res  <- jsonlite::fromJSON(txt, simplifyVector = FALSE)
+    pred <- res$predictions[[1]]
+
+    list(
+      ok         = TRUE,
+      prob       = as.numeric(pred$probabilidad_desempleo),
+      nivel      = pred$nivel_riesgo,
+      prediccion = pred$prediccion,
+      umbral     = if (!is.null(res$umbral_usado)) as.numeric(res$umbral_usado) else NA_real_
+    )
   })
   
   # -------------------------------------------------------------------------
@@ -627,10 +656,28 @@ server <- function(input, output, session) {
     
     # Si ya se presion?, calcular y mostrar resultado
     req(input$btn_predecir)
-    p_pct <- prediccion()$prob * 100
-    clase <- if (p_pct >= 50) "alto" else if (p_pct >= 25) "medio" else "bajo"
-    nivel <- if (p_pct >= THRESHOLD_OPTIMO * 100) "ALTO RIESGO"
-    else if (p_pct >= 25) "RIESGO MODERADO" else "BAJO RIESGO"
+    res <- prediccion()
+
+    # Si la API no respondio, mostrar el error dentro de la caja
+    if (!isTRUE(res$ok)) {
+      return(
+        div(class = "caja-probabilidad alto",
+            div(class = "num", "!"),
+            div(class = "label", "Sin respuesta de la API"),
+            div(style = "font-size: 12px; color: #6B7B85; margin-top: 10px;", res$msg)
+        )
+      )
+    }
+
+    p_pct <- res$prob * 100
+    # El nivel de riesgo (Baja/Media/Alta) lo define el modelo en la API; el
+    # tablero no aplica su propio corte, solo lo representa.
+    clase <- switch(res$nivel, "Alta" = "alto", "Media" = "medio", "Baja" = "bajo", "medio")
+    nivel <- switch(res$nivel,
+                    "Alta"  = "ALTO RIESGO",
+                    "Media" = "RIESGO MODERADO",
+                    "Baja"  = "BAJO RIESGO",
+                    res$nivel)
     
     # Color seg?n clase
     color_texto <- if (clase == "alto") "#D7191C"
@@ -643,7 +690,7 @@ server <- function(input, output, session) {
           div(class = "label", "Probabilidad estimada de desempleo"),
           div(style = "font-size: 14px; color: #4A6072; font-weight: 600; margin-top: 4px;", nivel),
           div(style = "font-size: 11px; color: #6B7B85; margin-top: 6px;",
-              paste0("Umbral óptimo: ", round(THRESHOLD_OPTIMO * 100, 1), "%"))
+              paste0("Umbral óptimo: ", round(ifelse(is.na(res$umbral), THRESHOLD_OPTIMO, res$umbral) * 100, 1), "%"))
       ),
       div(style = "margin-top: 15px;",
           div(style = "display: flex; justify-content: space-between; font-size: 11px; color: #888;",
