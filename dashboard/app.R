@@ -38,13 +38,13 @@ TASA_NACIONAL <- 11.3
 # =============================================================================
 # En despliegue, el contenedor del tablero recibe API_URL y API_PORT apuntando
 # a la API ya desplegada. En local usa 127.0.0.1:8001 por defecto.
-API_URL  <- Sys.getenv("API_URL",  unset = "http://127.0.0.1")
-API_PORT <- Sys.getenv("API_PORT", unset = "8001")
+API_URL  <- trimws(Sys.getenv("API_URL",  unset = "http://127.0.0.1"))
+API_PORT <- trimws(Sys.getenv("API_PORT", unset = "8001"))
 
 # Arma la URL de /api/v1/predict. Soporta IP:puerto (EC2/local) y dominio
 # https sin puerto (Railway).
 .build_api_endpoint <- function(url = API_URL, port = API_PORT) {
-  base <- url
+  base <- trimws(url)
   if (!grepl("^https?://", base)) base <- paste0("http://", base)
   if (nzchar(port) && !grepl("^https://", base) && !grepl(":[0-9]+$", base)) {
     base <- paste0(base, ":", port)
@@ -478,7 +478,7 @@ server <- function(input, output, session) {
     
     ggplotly(p, tooltip = "text", height = 400) %>%
       layout(margin = list(l = 120, r = 20, t = 40, b = 20)) %>%
-      config(displayModeBar = FALSE)
+      plotly::config(displayModeBar = FALSE)
   })
   
   # -------------------------------------------------------------------------
@@ -513,7 +513,7 @@ server <- function(input, output, session) {
     ggplotly(p, tooltip = "text", height = 350) %>%
       layout(legend = list(orientation = "h", x = 0.5, y = 1.1, xanchor = "center"),
              margin = list(t = 60, b = 40)) %>%
-      config(displayModeBar = FALSE)
+      plotly::config(displayModeBar = FALSE)
   })
   
   # -------------------------------------------------------------------------
@@ -551,7 +551,7 @@ server <- function(input, output, session) {
     ggplotly(p, tooltip = "text", height = 350) %>%
       layout(legend = list(orientation = "h", x = 0.5, y = 1.15, xanchor = "center"),
              margin = list(t = 70, b = 40)) %>%
-      config(displayModeBar = FALSE)
+      plotly::config(displayModeBar = FALSE)
   })
   
   # -------------------------------------------------------------------------
